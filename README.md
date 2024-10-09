@@ -3,4 +3,4 @@ Before running the code, install the [mitsuba](https://mitsuba.readthedocs.io/en
 ```
 pip install mitsuba
 ```
-simple_bounce.py
+<!-- simple_bounce.py -->
