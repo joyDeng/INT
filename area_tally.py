@@ -18,7 +18,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 100000000
-MAX_BOUNCE = 5
+MAX_BOUNCE = 2
 TOT_CROSS_SECTION_T = 1.0
 TOT_CROSS_SECTION_A = 0.1
 
@@ -98,11 +98,12 @@ class RectShield:
         point = ray.origin + t * ray.direction
         u = (point.x - self.xplane_left) / self.width
         v = (point.y - self.yplane_left) / self.height
+        z = point.z
 
-        return intersect, t, mi.Vector2f(u,v)
+        return intersect, t, mi.Vector3f(u,v, z)
 
     def compute_rest_dist(self, uv, point):
-        p = mi.Vector3f(uv.x * self.width + self.xplane_left, uv.y * self.height + self.yplane_left, self.origin.z)
+        p = mi.Vector3f(uv.x * self.width + self.xplane_left, uv.y * self.height + self.yplane_left, uv.z)
         direction_vec = p - point
         return dr.norm(direction_vec)
 
@@ -139,7 +140,7 @@ class Tally:
 
         intersect = (inrangey & (t > 0.0) & inrangez)
 
-        uv = mi.Vector2f((y - self.y_left) / self.width, (z - self.z_left) / self.width)
+        uv = mi.Vector3f((y - self.y_left) / self.width, (z - self.z_left) / self.width, z)
         return intersect, t, uv
 
  
@@ -322,7 +323,8 @@ def calculate_tally_energy_reparam(tally, sheilding, cross_section_tot_t, cross_
         intersect, r1, uv = sheilding.intersect(ray_current)
         remain_dist = sheilding.compute_rest_dist(uv, ray_current.origin)
         
-        tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
+        tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0
+        # cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
         # remain_dist_reparam = remain_dist / sheilding.height
         dist_reparam = dr.detach(sample_distance(tot_cross_section_reparam_t, rng))
 
