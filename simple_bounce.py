@@ -218,11 +218,11 @@ def calculate_esacpe_energy_reparam(depth, constant, cross_section_tot_t, cross_
 
         active &= ~escape(current_point, depth)
 
-        radiance *= (tot_cross_section - tot_cross_section_a)
+        radiance *= (tot_cross_section - tot_cross_section_a) 
         # (TOT_CROSS_SECTION_T - TOT_CROSS_SECTION_A)
 
         # sample direction 
-         N_directions = sample_dir_from_unit_sphere(rng)
+        N_directions = sample_dir_from_unit_sphere(rng)
 
         # sample energy
         N_array_E = rng.next_float32() * N_array_E
