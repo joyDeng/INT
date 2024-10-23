@@ -18,7 +18,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 100000000
-MAX_BOUNCE = 2
+MAX_BOUNCE = 5
 TOT_CROSS_SECTION_T = 1.0
 TOT_CROSS_SECTION_A = 0.1
 
@@ -323,20 +323,19 @@ def calculate_tally_energy_reparam(tally, sheilding, cross_section_tot_t, cross_
         intersect, r1, uv = sheilding.intersect(ray_current)
         remain_dist = sheilding.compute_rest_dist(uv, ray_current.origin)
         
-        tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0
-        # cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
+        tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
         # remain_dist_reparam = remain_dist / sheilding.height
         dist_reparam = dr.detach(sample_distance(tot_cross_section_reparam_t, rng))
 
         optical_dist = dr.select(remain_dist_reparam <= dist_reparam, remain_dist_reparam, dist_reparam)
 
-        transmittance = dr.exp(-tot_cross_section_reparam_t * remain_dist) 
+        transmittance = dr.exp(-tot_cross_section_reparam_t * optical_dist) 
         dist_pdf = dr.detach(dr.select(remain_dist_reparam <= dist_reparam, dr.exp(-tot_cross_section_reparam_t * optical_dist), tot_cross_section_reparam_t * dr.exp(-tot_cross_section_reparam_t * optical_dist)))
 
         # update current position of the neutron
-        radiance *= (transmittance / dist_pdf)
+        radiance *= (transmittance / dist_pdf) 
         # * jacobian_reparam
-        dist = dist_reparam * remain_dist_reparam / remain_dist
+        dist = dist_reparam * remain_dist
         # print(dist, r1)
         p0 = dist * ray_current.direction + p0
 
@@ -345,8 +344,8 @@ def calculate_tally_energy_reparam(tally, sheilding, cross_section_tot_t, cross_
         ray_continue = Ray(p0, ray_current.direction)
         hittally, ttally, uvtally = tally.intersect(ray_continue)
 
-        cos_theta = dr.abs(dr.dot(ray_continue.direction, tally.normal))
-        pdf_tally = (1.0 / tally.area) / cos_theta / (ttally * ttally)
+        #cos_theta = dr.abs(dr.dot(ray_continue.direction, tally.normal))
+        #pdf_tally = (1.0 / tally.area) / cos_theta / (ttally * ttally)
         # weight1 = balance(1.0 / (4.0 * dr.pi), pdf_tally)
         # accumulate to the tally
         arrive_energy = (radiance) & active & hittally & escape
@@ -451,7 +450,7 @@ def compute_auto_def_gradient(smallest, largest, stepsize):
     return energies, heights, gradients_fd
 
 def test_fd_ad():
-    hl = 0.1
+    hl = 0.0
     hh = 2.0
     step = 0.05
 
