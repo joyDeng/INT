@@ -1,0 +1,25 @@
+
+<scene version="0.6.0" >
+    <shape type="obj" id="shield">
+        <string name="filename" value="E:\Research\NeutronInv\INT\scene\boxshield.obj"/>
+        <medium type="homogeneous" name="interior">
+            <float name="scale" value="0.5" />
+			<rgb name="albedo" value="1, 1, 1" />
+			<rgb name="sigma_t" value="1, 1, 1" />
+		</medium>
+        <transform name="to_world">
+            <scale x="1.0" y="1.0" z="1.0"/>
+        </transform>
+    </shape>
+
+    <!-- <shape type="cube" id="shield"/> -->
+
+
+    <shape type="obj" id="sensor">
+        <string name="filename" value="E:\Research\NeutronInv\INT\scene\boxshield.obj"/>
+        <transform name="to_world">
+            <scale x="0.1" y="1.0" z="1.0"/>
+            <translate x="1.5" y="0.0" z="0.0"/>
+        </transform>
+    </shape>
+</scene>

@@ -1,3 +1,4 @@
 *.npy
 *.txt
+*.obj
 __pycache__
