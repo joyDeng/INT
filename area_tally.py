@@ -12,6 +12,7 @@ import drjit as dr
 from drjit.cuda import Float, UInt32
 from drjit.cuda.ad import Float as FloatD
 import numpy as np
+import random
 
 
 mi.set_variant('cuda_ad_rgb')
@@ -528,12 +529,14 @@ def test_increase_height(smallest, largest, stepsize):
     list_energy = []
     list_gradient = []
     heights = []
+    N=20
     while height < largest:
         print("height", height)
         Energy = energy_tally_height(height)
-        FD_gradient = energy_finite_different(height, 0.0001, 0)
-        # for i in range(1, 10):
-        #     FD_gradient += energy_finite_different(height, 0.001, i)
+        FD_gradient = energy_finite_different(height, 0.0001, 0) / (N+1)
+        start = random.randint(0,1000)
+        for i in range(start, start+N):
+            FD_gradient += energy_finite_different(height, 0.001, i) / (N+1)
 
         
         list_gradient.append(FD_gradient.numpy())
@@ -581,14 +584,14 @@ def test_fd_ad():
 
     
 
-    energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step)
-    np.save(DATA_DIR + "energy_variation_ad_reparam.npy", energy_variation_ad)
-    np.save(DATA_DIR + "shield_height_ad_reparam.npy", heights_ad)
-    np.save(DATA_DIR + "gradients_fd_ad_reparam.npy", gfd_ad)
+    #energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step)
+    #np.save(DATA_DIR + "energy_variation_ad_reparam.npy", energy_variation_ad)
+    #np.save(DATA_DIR + "shield_height_ad_reparam.npy", heights_ad)
+    #np.save(DATA_DIR + "gradients_fd_ad_reparam.npy", gfd_ad)
 
-    # energy_variation, heights, gfd = test_increase_height(hl, hh, step)
-    # np.save(DATA_DIR + "energy_variation.npy", energy_variation)
-    # np.save(DATA_DIR + "shield_height.npy", heights)
-    # np.save(DATA_DIR + "gradients_fd.npy", gfd)
+    energy_variation, heights, gfd = test_increase_height(hl, hh, step)
+    np.save(DATA_DIR + "energy_variation.npy", energy_variation)
+    np.save(DATA_DIR + "shield_height.npy", heights)
+    np.save(DATA_DIR + "gradients_fd.npy", gfd)
 
 test_fd_ad()
