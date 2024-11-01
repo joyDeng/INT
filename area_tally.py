@@ -25,6 +25,7 @@ NUMBER_NEUTRONS = 100000000
 MAX_BOUNCE = 3
 TOT_CROSS_SECTION_T = 0.5
 TOT_CROSS_SECTION_A = 0.05
+AVERAGE_COS = mi.Float(0.9)
 
 def equal(x, y):
     return dr.abs(x - y) < 1e-7
@@ -194,6 +195,24 @@ def test_intersect():
     print(intersect, t, uv)
 
 
+def hg(costheta, g):
+    demon = 1.0 + g * g + 2.0 * g * costheta
+    return 1.0 / (4.0 * dr.pi) * (1.0 - g * g ) / (demon * dr.sqrt(demon)); 
+
+def sample_direction_hg(rng, wi, g):
+    sample1, sample2 = rng.next_float32(), rng.next_float32()
+    sqrTerm = (1.0 - g * g ) / (  1.0 - g + 2.0 * g * sample1)
+    # print(g < 1e-3)
+    cosTheta  =  dr.select(g < 1e-3,  1.0 - 2.0 * sample1, (1.0 + g * g - sqrTerm * sqrTerm) / (2.0 * g) )
+
+    phi = 2.0 * dr.pi * sample2
+    sinThetaSqr = 1.0 - cosTheta * cosTheta
+    sinThetaSqr[sinThetaSqr <= 0.0] = 0.0
+    sinTheta = dr.sqrt(sinThetaSqr)
+    wo = mi.Frame3f(wi).to_world(mi.Vector3f(sinTheta * dr.cos(phi), sinTheta * dr.sin(phi), cosTheta))
+    return wo
+
+
 def sample_dir_from_unit_sphere(rng):
     v = dr.zeros(mi.Vector3f, NUMBER_NEUTRONS)
     sample1, sample2 = rng.next_float32(), rng.next_float32()
@@ -357,17 +376,18 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
     return t, mi.Vector2f(u, v), intersect
 
-
-
-
-
     p = e1 * its.prim_uv.x + e2 * its.prim_uv.y
 
     return p
-    
 
-def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_section_tot_a, reparam=True):
-    rng = mi.PCG32(size=NUMBER_NEUTRONS)
+
+
+
+
+
+
+def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
+    rng = mi.PCG32(size=NUMBER_NEUTRONS,initstate=seed)
 
     # set up tally
     E_tot = dr.zeros(FloatD)
@@ -394,15 +414,16 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
     V = dr.unravel(mi.Point3f, params['shield.vertex_positions'])
     F = dr.unravel(mi.Vector3i, params['shield.faces'])
     # UV = dr.unrevel(mi.Vector2f, params['shield.vertex_texcoords'])
-    # print(F)
-    # exit(0)
-    V.y = V.y * height
+    V.y = V.y + height
     params['shield.vertex_positions'] = dr.ravel(V)
     dr.enable_grad(params['shield.vertex_positions'])
     params.update()
+    
     # print(params)
+    # exit(0)
     ray_init = mi.Ray3f(source_origin, N_directions)
     its = scene.ray_intersect(ray_init)
+    interdist, uv, activei = recomputeIntersection(scene, its, V, F, ray_init, its.is_medium_transition())
     
     # exit(0)
     # p0 = dr.detach(ray_init.origin + ray_init.direction * (t + 0.000001))
@@ -416,6 +437,7 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
     E_tot += dr.sum(arrive_energy)
     
     active &= intersect_medium
+    its.p = interdist * N_directions + ray_init.o
     ray_current = its.spawn_ray(ray_init.d)
 
     for i in range(MAX_BOUNCE):
@@ -500,7 +522,12 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
         # * 4.0 * dr.pi
 
         ray_current.o = p0
-        ray_current.d = sample_dir_from_unit_sphere(rng)
+        wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+
+        fp = hg(dr.dot(wo, ray_current.d), AVERAGE_COS)
+        radiance *= fp / dr.detach(fp)
+
+        ray_current.d = wo
 
         # sample energy
         # N_array_E = rng.next_float32() * N_array_E
@@ -510,18 +537,20 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
 def energy_tally_height(height, seed=0):
     my_tally = Tally(mi.Vector3f(1.0, 0.0, 0.0), 2.0)
     # my_shield = RectShield(FloatD(height), FloatD(0.5), FloatD(2.0), mi.Vector3f(0.0, 0.0, 0.0))
-    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, False)
+    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, seed, False)
     return energy
 
-def energy_tally_height_reparam(height):
+def energy_tally_height_reparam(height, reparam):
     my_tally = Tally(mi.Vector3f(1.0, 0.0, 0.0), 2.0)
     # my_shield = RectShield(FloatD(height), FloatD(0.5), FloatD(2.0), mi.Vector3f(0.0, 0.0, 0.0))
-    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, True)
+    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, 0, reparam)
     return energy
 
 def energy_finite_different(height, delta, seed):
     e1 = energy_tally_height(height+delta, seed)
     e2 = energy_tally_height(height-delta, seed)
+    dr.detach(e1)
+    dr.detach(e2)
     return (e1 - e2) / (2.0 * delta)
 
 def test_increase_height(smallest, largest, stepsize):
@@ -529,16 +558,18 @@ def test_increase_height(smallest, largest, stepsize):
     list_energy = []
     list_gradient = []
     heights = []
-    N=20
+    N=10
     while height < largest:
         print("height", height)
         Energy = energy_tally_height(height)
-        FD_gradient = energy_finite_different(height, 0.0001, 0) / (N+1)
+        FD_gradient = energy_finite_different(height, 0.002, 0) / (N+1)
         start = random.randint(0,1000)
         for i in range(start, start+N):
-            FD_gradient += energy_finite_different(height, 0.001, i) / (N+1)
-
-        
+            difference = energy_finite_different(height, 0.002, i) / (N+1)
+            dr.eval(difference)
+            FD_gradient += difference
+            del difference
+            
         list_gradient.append(FD_gradient.numpy())
         list_energy.append(Energy.numpy())
         heights.append(height)
@@ -550,7 +581,7 @@ def test_increase_height(smallest, largest, stepsize):
     return energies, heights, gradients_fd
 
 
-def compute_auto_def_gradient(smallest, largest, stepsize):
+def compute_auto_def_gradient(smallest, largest, stepsize, reparam):
     height = smallest
     list_energy = []
     list_gradient = []
@@ -560,7 +591,7 @@ def compute_auto_def_gradient(smallest, largest, stepsize):
 
         H = FloatD(height)
         dr.enable_grad(H)
-        Energy = energy_tally_height_reparam(H)
+        Energy = energy_tally_height_reparam(H, reparam)
         # dr.set_grad(H, 1.0)
         # dr.forward_to(Energy)
         dr.backward(Energy)
@@ -579,15 +610,20 @@ def compute_auto_def_gradient(smallest, largest, stepsize):
 
 def test_fd_ad():
     hl = 0.1
-    hh = 2.0
-    step = 0.025
+    hh = 1.2
+    step = 0.023
 
     
 
-    #energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step)
-    #np.save(DATA_DIR + "energy_variation_ad_reparam.npy", energy_variation_ad)
-    #np.save(DATA_DIR + "shield_height_ad_reparam.npy", heights_ad)
-    #np.save(DATA_DIR + "gradients_fd_ad_reparam.npy", gfd_ad)
+    energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=False)
+    np.save(DATA_DIR + "energy_variation_ad.npy", energy_variation_ad)
+    np.save(DATA_DIR + "shield_height_ad.npy", heights_ad)
+    np.save(DATA_DIR + "gradients_fd_ad.npy", gfd_ad)
+
+    energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=True)
+    np.save(DATA_DIR + "energy_variation_ad_reparam.npy", energy_variation_ad)
+    np.save(DATA_DIR + "shield_height_ad_reparam.npy", heights_ad)
+    np.save(DATA_DIR + "gradients_fd_ad_reparam.npy", gfd_ad)
 
     energy_variation, heights, gfd = test_increase_height(hl, hh, step)
     np.save(DATA_DIR + "energy_variation.npy", energy_variation)

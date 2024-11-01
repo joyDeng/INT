@@ -12,7 +12,9 @@
         </transform>
     </shape>
 
-    <!-- <shape type="cube" id="shield"/> -->
+    <phase type="hg">
+        <float name="g" value="0.1"/>
+    </phase>
 
 
     <shape type="obj" id="sensor">
