@@ -9,6 +9,8 @@ plt.rcParams.update({'font.size': 22})
 plt.rc('xtick', labelsize=22)
 plt.rc('ytick', labelsize=22)
 
+expname = "height"
+
 plt.style.use("bmh")
 n = 8
 colors = plt.cm.Dark2(np.linspace(0.0, 1.0, n))
@@ -32,8 +34,8 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))  # 2 rows, 1 column
 ax1.plot(xs, data, color=colors[0], alpha=0.7, linewidth=5, label='baseline', linestyle='dashed')  # 'b-o' is a blue line with circle markers
 ax1.plot(xs, data_ad, color=colors[1], alpha=0.7, linewidth=5, label="w.o reparam")
 ax1.plot(xs, data_ad_re, color=colors[2], alpha=0.7, linewidth=5, label="w reparam")
-ax1.set_title('values w.r.t shielding displacement')
-ax1.set_xlabel('displacement')
+ax1.set_title(f'values w.r.t shielding {expname}')
+ax1.set_xlabel(f'{expname}')
 ax1.set_ylabel('tally')
 ax1.legend()
 
@@ -43,8 +45,8 @@ ax1.legend()
 ax2.plot(xs, ads, color=colors[1], alpha=0.7, linewidth=5, label='auto diff (ad)')  # 'r-s' is a red line with square markers
 ax2.plot(xs, ads_re, color=colors[2], alpha=0.7, linewidth=5, label='reparam_ad (ours)')  # 'r-s' is a red line with square markers
 ax2.plot(xs, gfds, color=colors[0], alpha=0.7, linewidth=5, label='finite diff', linestyle='dashed')  # 'r-s' is a red line with square markers
-ax2.set_title('gradient of tally w.r.t displacement')
-ax2.set_xlabel('displacement')
+ax2.set_title(f'gradient of tally w.r.t {expname}')
+ax2.set_xlabel(f'{expname}')
 ax2.set_ylabel('gradient')
 ax2.legend()
 

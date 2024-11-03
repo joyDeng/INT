@@ -22,10 +22,13 @@ from constant import DATA_DIR
 # print(type(mi.Float))
 
 NUMBER_NEUTRONS = 100000000
-MAX_BOUNCE = 3
-TOT_CROSS_SECTION_T = 0.5
-TOT_CROSS_SECTION_A = 0.05
-AVERAGE_COS = mi.Float(0.9)
+MAX_BOUNCE = 1
+TOT_CROSS_SECTION_T = 1.5
+TOT_CROSS_SECTION_A = 0.15
+AVERAGE_COS = mi.Float(0.0)
+FOUR_PI = 4.0 * 3.141592653
+INV_FOUR_PI = 1.0 / FOUR_PI
+PI = 3.141592653
 
 def equal(x, y):
     return dr.abs(x - y) < 1e-7
@@ -144,8 +147,6 @@ class RectShield:
         direction_vec = p - point
         return dr.norm(direction_vec)
 
-
-
 class Tally:
     def __init__(self, position, width):
         self.position = position
@@ -186,8 +187,6 @@ class Tally:
         # , uv
 
  
-        
-
 def test_intersect():
     shield = RectShield(1.0, 1.0, mi.Vector3f(0.0, 0.0, 0.0))
     r1y = Ray(mi.Vector3f(1.00, 0.0, 0.0), mi.Vector3f(-1.0, 0.0, 0.0))
@@ -202,7 +201,6 @@ def hg(costheta, g):
 def sample_direction_hg(rng, wi, g):
     sample1, sample2 = rng.next_float32(), rng.next_float32()
     sqrTerm = (1.0 - g * g ) / (  1.0 - g + 2.0 * g * sample1)
-    # print(g < 1e-3)
     cosTheta  =  dr.select(g < 1e-3,  1.0 - 2.0 * sample1, (1.0 + g * g - sqrTerm * sqrTerm) / (2.0 * g) )
 
     phi = 2.0 * dr.pi * sample2
@@ -382,11 +380,134 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
 
 
+def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
+    rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed)
+
+    # set up tally
+    E_tot = dr.zeros(FloatD)
+
+    # set up source: point source at (-1, 0, 0)
+    # N_array_E = dr.zeros(FloatD, NUMBER_NEUTRONS) + 1.0
+    radiance = dr.zeros(FloatD, NUMBER_NEUTRONS) + 1.0
+    source_origin = mi.Point3f(-1.0, 0, 0)
+    
+    # initialiate the neutrons
+    N_directions = sample_dir_from_unit_sphere(rng)
+
+    scene = mi.load_file("scene.xml")
+    params = mi.traverse(scene)
+
+    V = dr.unravel(mi.Point3f, params['shield.vertex_positions'])
+    F = dr.unravel(mi.Vector3i, params['shield.faces'])
+    V.y = V.y * height
+    params['shield.vertex_positions'] = dr.ravel(V)
+    dr.enable_grad(params['shield.vertex_positions'])
+    params.update()
+
+    ray_init = mi.Ray3f(source_origin, N_directions)
+    its = scene.ray_intersect(ray_init)
+    interdist, uv, activei = recomputeIntersection(scene, its, V, F, ray_init, its.is_medium_transition())
+    
+    
+    intersect_medium = (~dr.isinf(its.t)) & (its.is_medium_transition())
+    active = True
+    
+    detector = scene.emitters()[0]
+    ep = detector.sample_position(0.0, mi.Point2f(rng.next_float32(), rng.next_float32()))[0]
+    
+    edir = (ep.p - ray_init.o) / dr.norm(ep.p - ray_init.o)
+    ray_emitter = mi.Ray3f(source_origin, edir)
+    eits = scene.ray_intersect(ray_emitter)
+    
+    # TODO: add support to non_convex
+    einterdist, euv, eactive  = recomputeIntersection(scene, eits, V, F, ray_emitter, eits.is_medium_transition())
+    eits.p = einterdist * ray_emitter.d + ray_emitter.o
+    ray_emitter = eits.spawn_ray(ray_emitter.d)
+    
+
+    intersect_tally = (~dr.isinf(eits.t)) & (~eits.is_medium_transition())
+    #print(intersect_tally)
+
+    Jacobian =  dr.abs(dr.dot(mi.Vector3f(-1.0, 0.0, 0.0), -edir)) / (dr.sqr(dr.norm(ep.p - ray_init.o))) * INV_FOUR_PI
+    arrive_energy = (radiance / dr.detach(ep.pdf) * Jacobian) & active & intersect_tally 
+    active_emitter = eits.is_medium_transition()
+    E_tot += dr.sum(arrive_energy )
+    
+    active &= intersect_medium
+    its.p = interdist * N_directions + ray_init.o
+    ray_current = its.spawn_ray(ray_init.d)
+
+    phase_end = Jacobian
+    phase_continue = 1.0
+
+    for i in range(MAX_BOUNCE):
+        # account for the zero bounce path
+        
+        # contribute_mask = ~dr.isinf(exit_its.t) & (exit_its.is_medium_transition())
+        eits = scene.ray_intersect(ray_emitter)
+        last_rest_dist, uv, activei = recomputeIntersection(scene, eits, V, F, ray_emitter, eits.is_medium_transition())
+        #if reparam:
+            #tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, last_rest_dist, 1.0)
+        #else:
+            #tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, last_rest_dist, 1.0
+
+        transmittance = dr.exp(-cross_section_tot_t * last_rest_dist)
+        #if i > 0:
+           #phase_end =
+        E_tot += dr.sum((radiance * transmittance * phase_end / dr.detach(ep.pdf)) & active_emitter & eits.is_medium_transition())#
+
+        its = scene.ray_intersect(ray_current, active)
+        remain_dist, uv, activei = recomputeIntersection(scene, its, V, F, ray_current, its.is_medium_transition())
+
+        if reparam:
+            tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
+        else:
+            tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0
+
+        # remain_dist_reparam = remain_dist / sheilding.height
+        dist_reparam = sample_distance(tot_cross_section_reparam_t, rng)
+        optical_dist = dr.select(remain_dist_reparam <= dist_reparam, remain_dist_reparam, dist_reparam)
+
+        # costheta = dr.dot(ray_current.direction, )
+        transmittance = dr.exp(-tot_cross_section_reparam_t * optical_dist)
+        dist_pdf = dr.detach(dr.select(remain_dist_reparam <= dist_reparam,  dr.exp(-tot_cross_section_reparam_t * optical_dist), tot_cross_section_reparam_t * dr.exp(-tot_cross_section_reparam_t * optical_dist)))
+
+        # update current position of the neutron
+        radiance *= (transmittance / dist_pdf) * phase_continue# TODO:find the correct jacobian for the last bounce
+        dist = dist_reparam * jacobian_reparam
+        # print(dist, r1)
+        p0 = dist * ray_current.d + ray_current.o
+        
+
+        escape = (dist > remain_dist)
+        active &= ~escape
+        active_emitter = active
+        ep = detector.sample_position(0.0, mi.Point2f(rng.next_float32(), rng.next_float32()))[0]
+        #print(ep.pdf)
+        edir = (ep.p - p0) / dr.norm(ep.p - p0)
+        ray_emitter = mi.Ray3f(p0, edir)
+
+        ray_current.o = p0
+        wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+        fp_continue = hg(dr.dot(wo, ray_current.d), AVERAGE_COS)
+        dist_sqr = dr.sqr(dr.norm(ep.p - p0))
+
+        Gal_val = dr.abs(dr.dot(edir, mi.Vector3f(-1.0, 0.0, 0.0))) / dist_sqr
+        phase_continue = (tot_cross_section_reparam_t - tot_cross_section_reparam_a) 
+        #* fp_continue / dr.detach(fp_continue)
+        phase_end = (tot_cross_section_reparam_t - tot_cross_section_reparam_a) * hg(dr.dot(edir, ray_current.d), AVERAGE_COS) * Gal_val
+
+
+        ray_current.d = wo
+
+        # sample energy
+        # N_array_E = rng.next_float32() * N_array_E
+
+    return E_tot / NUMBER_NEUTRONS
 
 
 
-
-def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
+def calculate_tally_energy_reparam(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS,initstate=seed)
 
     # set up tally
@@ -414,7 +535,7 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
     V = dr.unravel(mi.Point3f, params['shield.vertex_positions'])
     F = dr.unravel(mi.Vector3i, params['shield.faces'])
     # UV = dr.unrevel(mi.Vector2f, params['shield.vertex_texcoords'])
-    V.y = V.y + height
+    V.y = V.y * height
     params['shield.vertex_positions'] = dr.ravel(V)
     dr.enable_grad(params['shield.vertex_positions'])
     params.update()
@@ -433,7 +554,7 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
     intersect_medium = (~dr.isinf(its.t)) & (its.is_medium_transition())
     active = True
     # add contribution (TODO: add jacobian for perpendicular area)
-    arrive_energy = radiance & active & intersect_tally
+    arrive_energy = (radiance * dr.abs(dr.dot(its.n, -ray_init.d))) & active & intersect_tally
     E_tot += dr.sum(arrive_energy)
     
     active &= intersect_medium
@@ -535,15 +656,13 @@ def calculate_tally_energy_reparam(tally, height, cross_section_tot_t, cross_sec
     return E_tot / NUMBER_NEUTRONS
 
 def energy_tally_height(height, seed=0):
-    my_tally = Tally(mi.Vector3f(1.0, 0.0, 0.0), 2.0)
     # my_shield = RectShield(FloatD(height), FloatD(0.5), FloatD(2.0), mi.Vector3f(0.0, 0.0, 0.0))
-    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, seed, False)
+    energy = calculate_tally_energy_light_connection(FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, seed, False)
     return energy
 
 def energy_tally_height_reparam(height, reparam):
-    my_tally = Tally(mi.Vector3f(1.0, 0.0, 0.0), 2.0)
     # my_shield = RectShield(FloatD(height), FloatD(0.5), FloatD(2.0), mi.Vector3f(0.0, 0.0, 0.0))
-    energy = calculate_tally_energy_reparam(my_tally, FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, 0, reparam)
+    energy = calculate_tally_energy_light_connection(FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, 0, reparam)
     return energy
 
 def energy_finite_different(height, delta, seed):
@@ -558,7 +677,7 @@ def test_increase_height(smallest, largest, stepsize):
     list_energy = []
     list_gradient = []
     heights = []
-    N=10
+    N=5
     while height < largest:
         print("height", height)
         Energy = energy_tally_height(height)
@@ -611,9 +730,7 @@ def compute_auto_def_gradient(smallest, largest, stepsize, reparam):
 def test_fd_ad():
     hl = 0.1
     hh = 1.2
-    step = 0.023
-
-    
+    step = 0.03
 
     energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=False)
     np.save(DATA_DIR + "energy_variation_ad.npy", energy_variation_ad)
@@ -630,4 +747,12 @@ def test_fd_ad():
     np.save(DATA_DIR + "shield_height.npy", heights)
     np.save(DATA_DIR + "gradients_fd.npy", gfd)
 
+
+def test_light_connection():
+    elight = calculate_tally_energy_light_connection(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
+    ephase = calculate_tally_energy_reparam(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
+
+    print("elight: ", elight, "ephase: ", ephase)
+
+#test_light_connection()
 test_fd_ad()
