@@ -15,17 +15,19 @@ plt.style.use("bmh")
 n = 8
 colors = plt.cm.Dark2(np.linspace(0.0, 1.0, n))
 
-data = np.load(DATA_DIR+"energy_variation.npy")
-xs = np.load(DATA_DIR+"shield_height.npy")
-gfds = np.load(DATA_DIR+"gradients_fd.npy")
+PARAM = "y offset k=2"
 
-data_ad = np.load(DATA_DIR+"energy_variation_ad.npy")
-xs_ad = np.load(DATA_DIR+"shield_height_ad.npy")
-ads = np.load(DATA_DIR+"gradients_fd_ad.npy")
+data = np.load(DATA_DIR+f"{PARAM}_energy_variation.npy")
+xs = np.load(DATA_DIR+f"{PARAM}_shield_height.npy")
+gfds = np.load(DATA_DIR+f"{PARAM}_gradients_fd.npy")
 
-data_ad_re = np.load(DATA_DIR+"energy_variation_ad_reparam.npy")
-xs_ad_re = np.load(DATA_DIR+"shield_height_ad_reparam.npy")
-ads_re = np.load(DATA_DIR+"gradients_fd_ad_reparam.npy")
+data_ad = np.load(DATA_DIR+f"{PARAM}_energy_variation_ad.npy")
+xs_ad = np.load(DATA_DIR+f"{PARAM}_shield_height_ad.npy")
+ads = np.load(DATA_DIR+f"{PARAM}_gradients_fd_ad.npy")
+
+data_ad_re = np.load(DATA_DIR+f"{PARAM}_energy_variation_ad_reparam.npy")
+xs_ad_re = np.load(DATA_DIR+f"{PARAM}_shield_height_ad_reparam.npy")
+ads_re = np.load(DATA_DIR+f"{PARAM}_gradients_fd_ad_reparam.npy")
 
 # Create a figure and two axes objects
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))  # 2 rows, 1 column

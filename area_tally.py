@@ -9,7 +9,7 @@ sys.path = ["."] + sys.path[2:]
 # need to change back to llvm on my mac
 import mitsuba as mi
 import drjit as dr
-from drjit.cuda import Float, UInt32
+from drjit.cuda import Float, UInt32, UInt64
 from drjit.cuda.ad import Float as FloatD
 import numpy as np
 import random
@@ -21,14 +21,16 @@ from constant import DATA_DIR
 
 # print(type(mi.Float))
 
-NUMBER_NEUTRONS = 100000000
-MAX_BOUNCE = 1
+NUMBER_NEUTRONS = 1000000
+MAX_BOUNCE = 2
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
 FOUR_PI = 4.0 * 3.141592653
 INV_FOUR_PI = 1.0 / FOUR_PI
 PI = 3.141592653
+BOUNCE_RECORD = 1
+PARAM = "y offset k=2"
 
 def equal(x, y):
     return dr.abs(x - y) < 1e-7
@@ -221,7 +223,7 @@ def sample_dir_from_unit_sphere(rng):
 
 # RETURN a float distance that is sampled proportional to the transmittance term
 def sample_distance(sig_t, rng):
-    distance = - dr.log(1.0 - rng.next_float32()) / sig_t
+    distance = - dr.log(1.0 - rng.next_float32()) / dr.detach(sig_t)
     return distance
 
 # RETURN True if test current point is outside of the filter
@@ -281,7 +283,8 @@ def calculate_tally_energy(tally, sheilding, cross_section_tot_t, cross_section_
     active = True
     # add contribution (TODO: add jacobian for perpendicular area)
     arrive_energy = radiance & active & (~intersect & intersect_tally)
-    E_tot += dr.sum(arrive_energy)
+    if (0==BOUNCE_RECORD) or (-1 == BOUNCE_RECORD):
+        E_tot += dr.sum(arrive_energy)
     active &= intersect
 
     ray_current = Ray(p0, ray_init.direction)
@@ -310,7 +313,8 @@ def calculate_tally_energy(tally, sheilding, cross_section_tot_t, cross_section_
         # weight1 = balance(1.0 / (4.0 * dr.pi), pdf_tally)
         # accumulate to the tally
         arrive_energy = (radiance) & active & escape & hittally 
-        E_tot += dr.sum(arrive_energy)
+        if (i==BOUNCE_RECORD) or (BOUNCE_RECORD == -1):
+            E_tot += dr.sum(arrive_energy)
 
         active &= ~escape
 
@@ -372,16 +376,19 @@ def recomputeIntersection(scene, its, v, f, ray, active):
     t = dr.dot(e2, qvec) * inv_det
     intersect &= (t >= 0.0)
 
-    return t, mi.Vector2f(u, v), intersect
+    p = e1 * u + e2 * v
 
-    p = e1 * its.prim_uv.x + e2 * its.prim_uv.y
+    return t, mi.Vector2f(u, v), p
 
-    return p
+    #
+
+    #return p
 
 
 
 def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
-    rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed)
+    rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
+    #print("float: ", rng.next_float32().numpy())
 
     # set up tally
     E_tot = dr.zeros(FloatD)
@@ -399,14 +406,14 @@ def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_s
 
     V = dr.unravel(mi.Point3f, params['shield.vertex_positions'])
     F = dr.unravel(mi.Vector3i, params['shield.faces'])
-    V.y = V.y * height
+    V.y = V.y + height
     params['shield.vertex_positions'] = dr.ravel(V)
     dr.enable_grad(params['shield.vertex_positions'])
     params.update()
 
     ray_init = mi.Ray3f(source_origin, N_directions)
     its = scene.ray_intersect(ray_init)
-    interdist, uv, activei = recomputeIntersection(scene, its, V, F, ray_init, its.is_medium_transition())
+    interdist, uv, ptheta = recomputeIntersection(scene, its, V, F, ray_init, its.is_medium_transition())
     
     
     intersect_medium = (~dr.isinf(its.t)) & (its.is_medium_transition())
@@ -431,33 +438,44 @@ def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_s
     Jacobian =  dr.abs(dr.dot(mi.Vector3f(-1.0, 0.0, 0.0), -edir)) / (dr.sqr(dr.norm(ep.p - ray_init.o))) * INV_FOUR_PI
     arrive_energy = (radiance / dr.detach(ep.pdf) * Jacobian) & active & intersect_tally 
     active_emitter = eits.is_medium_transition()
-    E_tot += dr.sum(arrive_energy )
+    if (0 == BOUNCE_RECORD) or  (-1 == BOUNCE_RECORD):
+        E_tot += dr.sum(arrive_energy)
     
     active &= intersect_medium
     its.p = interdist * N_directions + ray_init.o
+    #np.savetxt("debug_ray_init_0.txt", ray_init.o.numpy())
+   # np.savetxt("debug_its.p.txt", its.p.numpy())
     ray_current = its.spawn_ray(ray_init.d)
+    #np.savetxt("debug_ray_o_0.txt", ray_current.o.numpy())
+    #np.savetxt("debug_active.txt", active.numpy())
+    #np.savetxt("debug_interdist.txt", interdist.numpy())
+    p0 = its.p
+    #print(ray_current.o)
+    #exit(0)
 
     phase_end = Jacobian
     phase_continue = 1.0
 
     for i in range(MAX_BOUNCE):
-        # account for the zero bounce path
-        
-        # contribute_mask = ~dr.isinf(exit_its.t) & (exit_its.is_medium_transition())
-        eits = scene.ray_intersect(ray_emitter)
+        eits = scene.ray_intersect(ray_emitter, active_emitter)
         last_rest_dist, uv, activei = recomputeIntersection(scene, eits, V, F, ray_emitter, eits.is_medium_transition())
-        #if reparam:
-            #tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, last_rest_dist, 1.0)
-        #else:
-            #tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, last_rest_dist, 1.0
 
         transmittance = dr.exp(-cross_section_tot_t * last_rest_dist)
-        #if i > 0:
-           #phase_end =
-        E_tot += dr.sum((radiance * transmittance * phase_end / dr.detach(ep.pdf)) & active_emitter & eits.is_medium_transition())#
+
+        # debug for separate bounce
+        if (i == BOUNCE_RECORD) or  (-1 == BOUNCE_RECORD):
+            e = (radiance * transmittance * phase_end / dr.detach(ep.pdf)) & active_emitter & eits.is_medium_transition()
+            E_tot += dr.sum(e & ~dr.isnan(e))
+            # print("E_TOT", E_tot)
 
         its = scene.ray_intersect(ray_current, active)
-        remain_dist, uv, activei = recomputeIntersection(scene, its, V, F, ray_current, its.is_medium_transition())
+        remain_dist, uv, ptheta = recomputeIntersection(scene, its, V, F, ray_current, its.is_medium_transition())
+        wo = (ptheta - p0) / dr.norm(ptheta - p0)
+        
+        if i > 0:
+            fp_continue = hg(dr.dot(wi, wo), AVERAGE_COS)
+        else:
+            fp_continue = 1.0
 
         if reparam:
             tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
@@ -473,29 +491,40 @@ def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_s
         dist_pdf = dr.detach(dr.select(remain_dist_reparam <= dist_reparam,  dr.exp(-tot_cross_section_reparam_t * optical_dist), tot_cross_section_reparam_t * dr.exp(-tot_cross_section_reparam_t * optical_dist)))
 
         # update current position of the neutron
-        radiance *= (transmittance / dist_pdf) * phase_continue# TODO:find the correct jacobian for the last bounce
+        radiance *= (transmittance / dist_pdf) * phase_continue * fp_continue / dr.detach(fp_continue) # TODO:find the correct jacobian for the last bounce
         dist = dist_reparam * jacobian_reparam
-        # print(dist, r1)
+
         p0 = dist * ray_current.d + ray_current.o
-        
+        #np.savetxt("debug_ray_o_1.txt", ray_current.o.numpy())
+        wi = (p0 - ray_current.o) / dr.norm(p0 - ray_current.o)
+
+        #np.savetxt("debug_wi.txt", wi.numpy())
+        #np.savetxt("debug_ray_d.txt", ray_current.d.numpy())
+        #np.savetxt("debug_ray_o_2.txt", ray_current.o.numpy())
+        #np.savetxt("debug_dist_recompute", dr.norm(p0 - ray_current.o).numpy())
+        #np.savetxt("debug_dist", dist.numpy())
+        #exit(0)
 
         escape = (dist > remain_dist)
-        active &= ~escape
+        
+        active &= (~escape)
         active_emitter = active
+
         ep = detector.sample_position(0.0, mi.Point2f(rng.next_float32(), rng.next_float32()))[0]
-        #print(ep.pdf)
+        
         edir = (ep.p - p0) / dr.norm(ep.p - p0)
         ray_emitter = mi.Ray3f(p0, edir)
 
         ray_current.o = p0
         wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
-        fp_continue = hg(dr.dot(wo, ray_current.d), AVERAGE_COS)
+        
+        
         dist_sqr = dr.sqr(dr.norm(ep.p - p0))
+        fp_continue = hg(dr.dot(wo, wi), AVERAGE_COS)
 
         Gal_val = dr.abs(dr.dot(edir, mi.Vector3f(-1.0, 0.0, 0.0))) / dist_sqr
-        phase_continue = (tot_cross_section_reparam_t - tot_cross_section_reparam_a) 
-        #* fp_continue / dr.detach(fp_continue)
-        phase_end = (tot_cross_section_reparam_t - tot_cross_section_reparam_a) * hg(dr.dot(edir, ray_current.d), AVERAGE_COS) * Gal_val
+        phase_continue = (tot_cross_section_reparam_t - tot_cross_section_reparam_a)
+        phase_end = (tot_cross_section_reparam_t - tot_cross_section_reparam_a) * hg(dr.dot(edir, wi), AVERAGE_COS) * Gal_val
 
 
         ray_current.d = wo
@@ -660,9 +689,9 @@ def energy_tally_height(height, seed=0):
     energy = calculate_tally_energy_light_connection(FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, seed, False)
     return energy
 
-def energy_tally_height_reparam(height, reparam):
+def energy_tally_height_reparam(height, reparam, seed):
     # my_shield = RectShield(FloatD(height), FloatD(0.5), FloatD(2.0), mi.Vector3f(0.0, 0.0, 0.0))
-    energy = calculate_tally_energy_light_connection(FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, 0, reparam)
+    energy = calculate_tally_energy_light_connection(FloatD(height), TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, seed, reparam)
     return energy
 
 def energy_finite_different(height, delta, seed):
@@ -677,20 +706,24 @@ def test_increase_height(smallest, largest, stepsize):
     list_energy = []
     list_gradient = []
     heights = []
-    N=5
+    N=10
     while height < largest:
         print("height", height)
-        Energy = energy_tally_height(height)
-        FD_gradient = energy_finite_different(height, 0.002, 0) / (N+1)
+        Energy = 0.0
+        FD_gradient = 0.0
         start = random.randint(0,1000)
         for i in range(start, start+N):
-            difference = energy_finite_different(height, 0.002, i) / (N+1)
+            #print("seed: ", i)
+            energy = energy_tally_height(height, i)
+            Energy += energy.numpy() / N
+            del energy
+            difference = energy_finite_different(height, 0.002, i) / N
             dr.eval(difference)
-            FD_gradient += difference
+            FD_gradient += difference.numpy()
             del difference
             
-        list_gradient.append(FD_gradient.numpy())
-        list_energy.append(Energy.numpy())
+        list_gradient.append(FD_gradient)
+        list_energy.append(Energy)
         heights.append(height)
         height += stepsize
     energies = np.array(list_energy)
@@ -705,21 +738,27 @@ def compute_auto_def_gradient(smallest, largest, stepsize, reparam):
     list_energy = []
     list_gradient = []
     heights = []
+    N = 30
     while height < largest:
         print("ad height", height)
 
-        H = FloatD(height)
-        dr.enable_grad(H)
-        Energy = energy_tally_height_reparam(H, reparam)
-        # dr.set_grad(H, 1.0)
-        # dr.forward_to(Energy)
-        dr.backward(Energy)
-        dEdR = dr.grad(H)
+        start = random.randint(0,1000)
+        g = 0.0
+        energy = 0.0
+        for i in range(start, start+N):
+            H = FloatD(height)
+            dr.enable_grad(H)
+            Energy = energy_tally_height_reparam(H, reparam, i)
+            dr.backward(Energy)
+            dEdR = dr.grad(H)
+            g += dEdR.numpy() / N
+            energy += Energy.numpy() / N
+            del dEdR, Energy
         
-        list_gradient.append(dEdR.numpy())
+        list_gradient.append(g)
         # print(dEdR)
         # list_gradient.append(1.0)
-        list_energy.append(Energy.numpy())
+        list_energy.append(energy)
         heights.append(height)
         height += stepsize
     energies = np.array(list_energy)
@@ -732,20 +771,20 @@ def test_fd_ad():
     hh = 1.2
     step = 0.03
 
-    energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=False)
-    np.save(DATA_DIR + "energy_variation_ad.npy", energy_variation_ad)
-    np.save(DATA_DIR + "shield_height_ad.npy", heights_ad)
-    np.save(DATA_DIR + "gradients_fd_ad.npy", gfd_ad)
+    # energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=False)
+    # np.save(DATA_DIR + f"{PARAM}_energy_variation_ad.npy", energy_variation_ad)
+    # np.save(DATA_DIR + f"{PARAM}_shield_height_ad.npy", heights_ad)
+    # np.save(DATA_DIR + f"{PARAM}_gradients_fd_ad.npy", gfd_ad)
 
     energy_variation_ad, heights_ad, gfd_ad = compute_auto_def_gradient(hl, hh, step, reparam=True)
-    np.save(DATA_DIR + "energy_variation_ad_reparam.npy", energy_variation_ad)
-    np.save(DATA_DIR + "shield_height_ad_reparam.npy", heights_ad)
-    np.save(DATA_DIR + "gradients_fd_ad_reparam.npy", gfd_ad)
+    np.save(DATA_DIR + f"{PARAM}_energy_variation_ad_reparam.npy", energy_variation_ad)
+    np.save(DATA_DIR + f"{PARAM}_shield_height_ad_reparam.npy", heights_ad)
+    np.save(DATA_DIR + f"{PARAM}_gradients_fd_ad_reparam.npy", gfd_ad)
 
-    energy_variation, heights, gfd = test_increase_height(hl, hh, step)
-    np.save(DATA_DIR + "energy_variation.npy", energy_variation)
-    np.save(DATA_DIR + "shield_height.npy", heights)
-    np.save(DATA_DIR + "gradients_fd.npy", gfd)
+    # energy_variation, heights, gfd = test_increase_height(hl, hh, step)
+    # np.save(DATA_DIR + f"{PARAM}_energy_variation.npy", energy_variation)
+    # np.save(DATA_DIR + f"{PARAM}_shield_height.npy", heights)
+    # np.save(DATA_DIR + f"{PARAM}_gradients_fd.npy", gfd)
 
 
 def test_light_connection():
