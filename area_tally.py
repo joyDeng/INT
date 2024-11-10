@@ -32,161 +32,161 @@ PI = 3.141592653
 BOUNCE_RECORD = 1
 PARAM = "y offset k=2"
 
-def equal(x, y):
-    return dr.abs(x - y) < 1e-7
+# def equal(x, y):
+#     return dr.abs(x - y) < 1e-7
 
-def inrange(x, left, right):
-    # equalleft = (dr.abs(x - left) < 1e-7)
-    # equalright = (dr.abs(x - right) < 1e-7)
-    return (equal(x, left) | (x > left)) & ((x < right) | equal(x, right))
+# def inrange(x, left, right):
+#     # equalleft = (dr.abs(x - left) < 1e-7)
+#     # equalright = (dr.abs(x - right) < 1e-7)
+#     return (equal(x, left) | (x > left)) & ((x < right) | equal(x, right))
 
-class Ray:
-    def __init__(self, origin, direction):
-        self.origin = origin
-        self.direction = direction / dr.norm(direction)
-        # print(self.direction)
-        self.t = dr.zeros(FloatD) + dr.inf
-        # print(origin.Shape)
+# class Ray:
+#     def __init__(self, origin, direction):
+#         self.origin = origin
+#         self.direction = direction / dr.norm(direction)
+#         # print(self.direction)
+#         self.t = dr.zeros(FloatD) + dr.inf
+#         # print(origin.Shape)
 
-class RectShield:
-    def __init__(self, height, width, depth, origin):
-        self.height = height
-        self.width = width
-        self.depth = depth
-        self.origin = origin
+# class RectShield:
+#     def __init__(self, height, width, depth, origin):
+#         self.height = height
+#         self.width = width
+#         self.depth = depth
+#         self.origin = origin
 
-        self.xplane_left = self.origin.x - width * 0.5
-        self.xplane_right =  self.origin.x + width * 0.5
+#         self.xplane_left = self.origin.x - width * 0.5
+#         self.xplane_right =  self.origin.x + width * 0.5
 
-        self.yplane_left = self.origin.y - height * 0.5
-        self.yplane_right =  self.origin.y + height * 0.5
+#         self.yplane_left = self.origin.y - height * 0.5
+#         self.yplane_right =  self.origin.y + height * 0.5
 
-        self.zplane_left = self.origin.z - depth * 0.5
-        self.zplane_right =  self.origin.z + depth * 0.5
+#         self.zplane_left = self.origin.z - depth * 0.5
+#         self.zplane_right =  self.origin.z + depth * 0.5
 
 
-    def inrange(self, p, axis=0):
-        xi = inrange(p.x, self.xplane_left, self.xplane_right)
-        yi = inrange(p.y, self.yplane_left, self.yplane_right)
-        zi = inrange(p.z, self.zplane_left, self.zplane_right)
-        return xi & yi & zi
-        # if axis == 0:
-        #     return yi & zi
-        # elif axis == 1:
-        #     return xi & zi
-        # elif axis == 2:
-        #     return xi & yi
-        # else:
-        #     return False
+#     def inrange(self, p, axis=0):
+#         xi = inrange(p.x, self.xplane_left, self.xplane_right)
+#         yi = inrange(p.y, self.yplane_left, self.yplane_right)
+#         zi = inrange(p.z, self.zplane_left, self.zplane_right)
+#         return xi & yi & zi
+#         # if axis == 0:
+#         #     return yi & zi
+#         # elif axis == 1:
+#         #     return xi & zi
+#         # elif axis == 2:
+#         #     return xi & yi
+#         # else:
+#         #     return False
 
-    # ray geometry intersection
-    def intersect(self, ray):
+#     # ray geometry intersection
+#     def intersect(self, ray):
         
-        intersect = True
-        valid_1 = True
-        valid_2 = True
+#         intersect = True
+#         valid_1 = True
+#         valid_2 = True
 
-        # intersect with x planes
-        t_x_1 = (self.xplane_left - ray.origin.x) / ray.direction.x
-        t_x_2 = (self.xplane_right - ray.origin.x) / ray.direction.x
+#         # intersect with x planes
+#         t_x_1 = (self.xplane_left - ray.origin.x) / ray.direction.x
+#         t_x_2 = (self.xplane_right - ray.origin.x) / ray.direction.x
 
-        p1 = ray.origin + t_x_1 * ray.direction
-        p2 = ray.origin + t_x_2 * ray.direction
+#         p1 = ray.origin + t_x_1 * ray.direction
+#         p2 = ray.origin + t_x_2 * ray.direction
 
-        # yinrange_1 = 
-        # yinrange_2 = 
+#         # yinrange_1 = 
+#         # yinrange_2 = 
 
-        valid_2 &= ((t_x_2 > 0.0) & self.inrange(p2))
-        valid_1 &= ((t_x_1 > 0.0) & self.inrange(p1))
+#         valid_2 &= ((t_x_2 > 0.0) & self.inrange(p2))
+#         valid_1 &= ((t_x_1 > 0.0) & self.inrange(p1))
 
-        tx = dr.select(valid_1 & valid_2, dr.select(t_x_1 > t_x_2, t_x_2, t_x_1), dr.select(valid_1, t_x_1, dr.select(valid_2, t_x_2, -1.0)))
+#         tx = dr.select(valid_1 & valid_2, dr.select(t_x_1 > t_x_2, t_x_2, t_x_1), dr.select(valid_1, t_x_1, dr.select(valid_2, t_x_2, -1.0)))
 
-        # intersect with y planes
-        valid_1 = True
-        valid_2 = True
+#         # intersect with y planes
+#         valid_1 = True
+#         valid_2 = True
 
-        t_y_1 = (self.yplane_left - ray.origin.y) / ray.direction.y
-        t_y_2 = (self.yplane_right - ray.origin.y) / ray.direction.y
+#         t_y_1 = (self.yplane_left - ray.origin.y) / ray.direction.y
+#         t_y_2 = (self.yplane_right - ray.origin.y) / ray.direction.y
 
-        p1 = ray.origin + t_y_1 * ray.direction
-        p2 = ray.origin + t_y_2 * ray.direction
+#         p1 = ray.origin + t_y_1 * ray.direction
+#         p2 = ray.origin + t_y_2 * ray.direction
 
-        valid_2 &= ((t_y_2 > 0.0) & self.inrange(p2))
-        valid_1 &= ((t_y_1 > 0.0) & self.inrange(p1))
+#         valid_2 &= ((t_y_2 > 0.0) & self.inrange(p2))
+#         valid_1 &= ((t_y_1 > 0.0) & self.inrange(p1))
 
-        ty = dr.select(valid_1 & valid_2, dr.select(t_y_1 > t_y_2, t_y_2, t_y_1), dr.select(valid_1, t_y_1, dr.select(valid_2, t_y_2, -1.0)))
+#         ty = dr.select(valid_1 & valid_2, dr.select(t_y_1 > t_y_2, t_y_2, t_y_1), dr.select(valid_1, t_y_1, dr.select(valid_2, t_y_2, -1.0)))
 
-        # intersect with z planes
-        valid_1 = True
-        valid_2 = True
+#         # intersect with z planes
+#         valid_1 = True
+#         valid_2 = True
 
-        t_z_1 = (self.zplane_left - ray.origin.z) / ray.direction.z
-        t_z_2 = (self.zplane_right - ray.origin.z) / ray.direction.z
+#         t_z_1 = (self.zplane_left - ray.origin.z) / ray.direction.z
+#         t_z_2 = (self.zplane_right - ray.origin.z) / ray.direction.z
 
-        p1 = ray.origin + t_z_1 * ray.direction
-        p2 = ray.origin + t_z_2 * ray.direction
+#         p1 = ray.origin + t_z_1 * ray.direction
+#         p2 = ray.origin + t_z_2 * ray.direction
 
-        valid_2 &= ((t_z_2 > 0.0) & self.inrange(p2))
-        valid_1 &= ((t_z_1 > 0.0) & self.inrange(p1))
+#         valid_2 &= ((t_z_2 > 0.0) & self.inrange(p2))
+#         valid_1 &= ((t_z_1 > 0.0) & self.inrange(p1))
 
-        tz = dr.select(valid_1 & valid_2, dr.select(t_z_1 > t_z_2, t_z_2, t_z_1), dr.select(valid_1, t_z_1, dr.select(valid_2, t_z_2, -1.0)))
+#         tz = dr.select(valid_1 & valid_2, dr.select(t_z_1 > t_z_2, t_z_2, t_z_1), dr.select(valid_1, t_z_1, dr.select(valid_2, t_z_2, -1.0)))
 
-        t = dr.select((tx > 0.0) & (ty > 0.0), dr.select(tx > ty, ty, tx), dr.select(tx > 0.0, tx, dr.select(ty > 0.0, ty, -1.0)))
-        t = dr.select((tz > 0.0) & (t > 0.0), dr.select(tz > t, t, tz), dr.select(tz > 0.0, tz, dr.select(t > 0.0, t, -1.0)))
+#         t = dr.select((tx > 0.0) & (ty > 0.0), dr.select(tx > ty, ty, tx), dr.select(tx > 0.0, tx, dr.select(ty > 0.0, ty, -1.0)))
+#         t = dr.select((tz > 0.0) & (t > 0.0), dr.select(tz > t, t, tz), dr.select(tz > 0.0, tz, dr.select(t > 0.0, t, -1.0)))
 
-        intersect &= (t > 0.0)
+#         intersect &= (t > 0.0)
 
-        # costheta = dr.abs(dr.dot(ray.direction, dr.norm(mi.Vector3f(0.0, self.height, 0.0))))
-        # compute coordintate of intersection
-        point = ray.origin + t * ray.direction 
-        u = (point.x - self.xplane_left) / self.width
-        v = (point.y - self.yplane_left) / self.height
-        z = (point.z - self.zplane_left) / self.depth
-        return intersect, t, mi.Vector3f(u,v,z)
+#         # costheta = dr.abs(dr.dot(ray.direction, dr.norm(mi.Vector3f(0.0, self.height, 0.0))))
+#         # compute coordintate of intersection
+#         point = ray.origin + t * ray.direction 
+#         u = (point.x - self.xplane_left) / self.width
+#         v = (point.y - self.yplane_left) / self.height
+#         z = (point.z - self.zplane_left) / self.depth
+#         return intersect, t, mi.Vector3f(u,v,z)
 
-    def compute_rest_dist(self, uv, point):
-        p = mi.Vector3f(uv.x * self.width + self.xplane_left, uv.y * self.height + self.yplane_left, uv.z * self.depth + self.zplane_left)
-        direction_vec = p - point
-        return dr.norm(direction_vec)
+#     def compute_rest_dist(self, uv, point):
+#         p = mi.Vector3f(uv.x * self.width + self.xplane_left, uv.y * self.height + self.yplane_left, uv.z * self.depth + self.zplane_left)
+#         direction_vec = p - point
+#         return dr.norm(direction_vec)
 
-class Tally:
-    def __init__(self, position, width):
-        self.position = position
-        self.width = width
-        self.y_right = self.position.y + self.width * 0.5
-        self.y_left = self.position.y - self.width * 0.5
+# class Tally:
+#     def __init__(self, position, width):
+#         self.position = position
+#         self.width = width
+#         self.y_right = self.position.y + self.width * 0.5
+#         self.y_left = self.position.y - self.width * 0.5
 
-        self.z_right = self.position.z + self.width * 0.5
-        self.z_left = self.position.z - self.width * 0.5
+#         self.z_right = self.position.z + self.width * 0.5
+#         self.z_left = self.position.z - self.width * 0.5
 
-        self.area = self.width * self.width
-        self.normal = mi.Vector3f(-1.0, 0.0, 0.0)
+#         self.area = self.width * self.width
+#         self.normal = mi.Vector3f(-1.0, 0.0, 0.0)
 
-    def samplePoint(self, rng):
-        rnd1, rnd2 = rng.next_float32(), rng.next_float32()
-        point = self.position + mi.Vector3f(0.0, (rnd1 - 0.5) * self.width, (rnd2 - 0.5) * self.width) 
-        pdf = 1.0 / (self.area)
-        return point, pdf
+#     def samplePoint(self, rng):
+#         rnd1, rnd2 = rng.next_float32(), rng.next_float32()
+#         point = self.position + mi.Vector3f(0.0, (rnd1 - 0.5) * self.width, (rnd2 - 0.5) * self.width) 
+#         pdf = 1.0 / (self.area)
+#         return point, pdf
 
-    def intersect(self, ray):
-        t = (self.position.x - ray.origin.x) / ray.direction.x
-        return ray.direction.x > 0.0, t
+#     def intersect(self, ray):
+#         t = (self.position.x - ray.origin.x) / ray.direction.x
+#         return ray.direction.x > 0.0, t
 
-        # p = ray.origin + t * ray.direction
-        # # y = ray.direction.y * t + ray.origin.y
-        # inrangey = inrange(p.y, self.y_left, self.y_right)
+#         # p = ray.origin + t * ray.direction
+#         # # y = ray.direction.y * t + ray.origin.y
+#         # inrangey = inrange(p.y, self.y_left, self.y_right)
         
 
-        # # try to make the tally infinite in z dimension
-        # # z = ray.direction.z * t + ray.origin.z
-        # inrangez = inrange(p.z, self.z_left, self.z_right)
+#         # # try to make the tally infinite in z dimension
+#         # # z = ray.direction.z * t + ray.origin.z
+#         # inrangez = inrange(p.z, self.z_left, self.z_right)
 
-        # intersect = (inrangey & (t > 0.0) & inrangez)
+#         # intersect = (inrangey & (t > 0.0) & inrangez)
 
-        # # uv = mi.Vector3f((y - self.y_left) / self.width, (z - self.z_left) / self.width, z)
-        # return intersect, t
+#         # # uv = mi.Vector3f((y - self.y_left) / self.width, (z - self.z_left) / self.width, z)
+#         # return intersect, t
         
-        # , uv
+#         # , uv
 
  
 def test_intersect():
@@ -254,8 +254,8 @@ def cross_section_nor(cross_section_tot, cross_section_tot_a, depth, constant):
     cross_section_new_a = 1.0 / ltot_a
     return cross_section_new, cross_section_new_a, depth / (constant * depth),  depth
 
-def balance(pdf1, pdf2):
-    return pdf1 / (pdf1 + pdf2)
+# def balance(pdf1, pdf2):
+#     return pdf1 / (pdf1 + pdf2)
 
 
 def calculate_tally_energy(tally, sheilding, cross_section_tot_t, cross_section_tot_a, seed=0):
@@ -383,8 +383,6 @@ def recomputeIntersection(scene, its, v, f, ray, active):
     #
 
     #return p
-
-
 
 def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
@@ -794,4 +792,4 @@ def test_light_connection():
     print("elight: ", elight, "ephase: ", ephase)
 
 #test_light_connection()
-test_fd_ad()
+# test_fd_ad()

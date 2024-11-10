@@ -1,4 +1,8 @@
 *.npy
 *.txt
 *.obj
+Opt
+data
+*.mtl
+*.bat
 __pycache__
