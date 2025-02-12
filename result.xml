@@ -10,7 +10,7 @@
         <float name="fov" value="45"/>
         <transform name="to_world">
             <!-- Rotate camera clockwise by 45 degrees along the y-axis -->
-            <lookat origin="0, 0, 5" target="0, 0, 0" up="0, 1, 0"/>
+            <lookat origin="0, 0, 25" target="0, 0, 0" up="0, 1, 0"/>
         </transform>
         <sampler type="independent">
             <integer name="sample_count" value="64"/>
@@ -36,39 +36,38 @@
         <ref id="medium"/>
     </shape>
 
-    <shape type="sphere" id="light">
+    <!-- <shape type="sphere" id="light">
         <transform name="to_world">
             <scale x="0.025" y="0.025" z="0.025"/>
             <translate x="-1.0" y="0.0" z="0.0"/>
         </transform>
         <ref id="source"/>
-    </shape>
+    </shape> -->
 
     <emitter type="directional">
         <spectrum name="irradiance" value="1.0"/>
         <transform name="to_world">
-            <!-- Light direction aimed from top-right towards the origin -->
             <lookat origin="1, 1, 1" target="0, 0, 0" up="0, 1, 0"/>
         </transform>
     </emitter>
 
-     <emitter type="directional">
+     <!-- <emitter type="directional">
         <spectrum name="irradiance" value="1.0"/>
         <transform name="to_world">
-            <!-- Light direction aimed from top-right towards the origin -->
             <lookat origin="-1, -1, 1" target="0, 0, 0" up="0, 1, 0"/>
         </transform>
-    </emitter>
+    </emitter> -->
 
-    <shape type="obj" id="sensor">
+    <!-- <emitter type="constant">
+         <rgb name="radiance" value="1.0"/>
+    </emitter> -->
+
+    <!-- <shape type="obj" id="sensor">
         <string name="filename" value="E:\Research\NeutronInv\INT\scene\sensor.obj"/>
         <transform name="to_world">
-            <!-- <scale x="1.1" y="1.0" z="1.0"/> -->
+            
             <translate x="1.0" y="0.0" z="0.0"/>
         </transform>
-        <!-- <emitter type="area">
-			<rgb name="radiance" value="1.0" />
-		</emitter> -->
         <ref id="detector"/>
-    </shape>
+    </shape> -->
 </scene>

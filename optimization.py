@@ -120,17 +120,21 @@ def opt(scenefile, iteration_count, key, remesh):
     # print("start optimization")
     scene = mi.load_file(DATA_DIR + scenefile)
     params = mi.traverse(scene)
+
+    # print(params)
+    # exit(0)
     
     lambda_ = 35
     ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+    
+
+
     opt = mi.ad.Adam(lr=0.005)
     opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
     
     F = dr.unravel(mi.Vector3i, params[f'{key}.faces'])
     V = dr.unravel(mi.Point3f, params[f'{key}.vertex_positions'])
 
-    
-    # exit(0)
     init_volume = dr.detach(compute_volume(V, F))
     # negative_delta_volme = init_volume_abs - init_volume
     # print(init_volume.numpy())
@@ -190,7 +194,7 @@ def opt(scenefile, iteration_count, key, remesh):
         # negative_volume_mse = mse(dvx, negative_delta_volme)
 
         energy = calculate_tally_energy_light_connection(scene, V, F, TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, it, True)
-        loss = energy + range_loss * 2.0 + volume_mse * 2.0 
+        loss = energy + range_loss * 2.0 + volume_mse * 5.0 
         dr.backward(loss)
         opt.step()
 
@@ -202,6 +206,28 @@ def opt(scenefile, iteration_count, key, remesh):
     np.save(TEMP_DIR+"enery.npy", np.array(errors))
     np.save(TEMP_DIR+"volumes.npy", np.array(volumes))
     print('\nOptimization complete.')
+
+
+def accumulateTransmittance(scene, ray, cross_section_tot_t, active):
+    # state = False
+    # state = dr.zeros(mi.Int, dr.width(ray))
+    transmittance = dr.ones(mi.Float, dr.width(ray))
+    active_zec = active
+    while dr.any(active):
+        its = scene.ray_intersect(ray)
+        hit_emitter = (~dr.isinf(its.t)) | (~its.is_medium_transition())
+        
+        active &= ((~dr.isinf(its.t)) | (~its.is_medium_transition()) | (its.t > ray.maxt))
+        interdist, uv, ptheta = recomputeIntersection(scene, its, V, F, ray_init, its.is_medium_transition())
+        exit_medium = (dr.dot(its.n, ray.d) > 0.0)
+        transmittance *= dr.select(exit_medium, dr.exp(-interdist * cross_section_tot_t), 1.0)
+        its.p = ray.o + interdist * ray.d
+        maxt = ray.maxt - its.t
+        ray = its.spawn_ray(ray.d)
+        ray.maxt = maxt
+
+    return transmittance
+        
 
 def calculate_tally_energy_light_connection(scene, V, F, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
@@ -228,7 +254,13 @@ def calculate_tally_energy_light_connection(scene, V, F, cross_section_tot_t, cr
     
     edir = (ep.p - ray_init.o) / dr.norm(ep.p - ray_init.o)
     ray_emitter = mi.Ray3f(source_origin, edir)
+    
+
+    tr, emitter_ac = accumulateTransmittance(scene, ray_emitter, V, F, cross_section_tot_t, True)
+    
     eits = scene.ray_intersect(ray_emitter)
+
+
     
     # TODO: add support to non_convex
     einterdist, euv, eactive  = recomputeIntersection(scene, eits, V, F, ray_emitter, eits.is_medium_transition())
@@ -347,5 +379,38 @@ def render_result(scenefile, iters):
         del objs
 
 
-opt("scene.xml", 1250, "shield", remesh=100)
-render_result("result.xml", 1250)
+def render_geo(scenefile, iters):
+    CURRENT_TEMP_DIR = "E:\Research\data\psdr_jit\camera_ready_geo\\tempginko\\"
+    scene = mi.load_file(DATA_DIR + scenefile)
+    param = mi.traverse(scene)
+    #for i in range(iters)
+    for i in range(iters):
+        
+        id = i * 50
+        print(id)
+        if (id >= 500) and (id < 600):
+            continue
+        objs = mi.load_dict({
+            'type': 'obj',
+            'filename':CURRENT_TEMP_DIR + f"displacement_iter{id}.obj",
+            'bsdf':{
+                'type':'diffuse',
+                'reflectance':{'type':'rgb', 'value':(0.5, 0.8, 0.65)}
+            }
+        })
+        ltemp_ply = mi.traverse(objs)
+        # print(ltemp_ply)
+        # exit(0)
+   
+        param['shield.vertex_positions'] = ltemp_ply["vertex_positions"]
+        param['shield.faces'] = ltemp_ply["faces"]
+        param['shield.vertex_normals'] = ltemp_ply["vertex_normals"]
+        param['shield.vertex_texcoords'] = ltemp_ply["vertex_texcoords"]
+        # param['shield.faces'] = ltemp_ply["faces"]
+        param.update()
+        image = mi.render(scene, spp=64)
+        mi.util.write_bitmap(CURRENT_TEMP_DIR + "geo_iter{:02d}.png".format(i), image)
+        del objs
+
+opt("hetero.xml", 1250, "shield", remesh=100)
+# render_geo("result.xml", 20)

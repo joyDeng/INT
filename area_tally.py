@@ -380,9 +380,7 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
     return t, mi.Vector2f(u, v), p
 
-    #
 
-    #return p
 
 def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)

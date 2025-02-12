@@ -1,9 +1,20 @@
 
 <scene version="0.6.0" >
-    <shape type="obj" id="shield">
-        <string name="filename" value="E:\Research\NeutronInv\INT\scene\init.obj"/>
+    <shape type="sphere" id="shield1">
         <medium type="homogeneous" name="interior">
             <float name="scale" value="0.5" />
+			<rgb name="albedo" value="1, 1, 1" />
+			<rgb name="sigma_t" value="1, 1, 1" />
+		</medium>
+        <transform name="to_world">
+            <scale x="0.2" y="0.2" z="0.2"/>
+            <!-- <translate x="-1.5"/> -->
+        </transform>
+    </shape>
+
+    <shape type="sphere" id="shield2">
+        <medium type="homogeneous" name="interior">
+            <float name="scale" value="0.6" />
 			<rgb name="albedo" value="1, 1, 1" />
 			<rgb name="sigma_t" value="1, 1, 1" />
 		</medium>
