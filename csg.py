@@ -106,6 +106,18 @@ def geo_intersect(scene, ray):
             its_list.append([its, active, shape_id])
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
 
+        
+        # print("idx", its, its.is_valid(), its.t)
+        # print("\n")
+        # print("normal", (its.sh_frame.n))
+        # print("\n")
+        # print("ray direction", (iter_ray.d))
+        # print("\n")
+        # print("interesction point", its.p)
+        # print("\n")
+        # print("ray direction recomputed", its.p / dr.norm(its.p - mi.Point3f(0.0)))
+        # exit(0)
+
     return its_list
 
 def count_active_intersect(it_list):
@@ -127,8 +139,8 @@ def get_init_state(its, shape_order, ray_num, geo_num, ray_dir):
         active_its = dr.select(cur_active, active_its+1, active_its)
 
         idx += 1
-        exit_geo = ((dr.dot(it.n, ray_dir) > 0) & (cur_active)).numpy()
-        in_geo = ((dr.dot(it.n, ray_dir) < 0) & (cur_active)).numpy()
+        exit_geo = ((dr.dot(it.sh_frame.n, ray_dir) > 0) & (cur_active)).numpy()
+        in_geo = ((dr.dot(it.sh_frame.n, ray_dir) < 0) & (cur_active)).numpy()
         pidx = shape_id.numpy()
     
         exit_rays = np.where(exit_geo == True)
@@ -141,6 +153,7 @@ def get_init_state(its, shape_order, ray_num, geo_num, ray_dir):
         trace_out_state[exit_rays, exit_pidx] = 1
         trace_out_state[in_rays, in_pidx] = 0
         geo_states_list.append(trace_out_state)
+
 
     # summarize init state
     init_state = np.zeros([ray_num, geo_num], dtype=np.int32) - 1
@@ -174,12 +187,14 @@ def next_state(init_state, inter_state):
 
 def csg_intersect(scene, rays, csnode):
     shape_state, shape_order = csnode.state_list()
+    print(csnode.op, shape_state)
     its = geo_intersect(scene, rays)
     num_rays = dr.width(rays)
     num_geometry = len(shape_order)
 
     # determine initial space state of the ray.o
-    print("get init state")
+    # print("get init state")
+    # print("rays init point", rays.o)
     init_state, geo_state_list = get_init_state(its, shape_order, num_rays, num_geometry, rays.d)
     cur_space = inside(shape_state, init_state)
 
@@ -188,11 +203,16 @@ def csg_intersect(scene, rays, csnode):
     num_valid_intersection = dr.zeros(FloatD, dr.width(rays))
     for it, intersection_state in zip(its, geo_state_list):
         change_state = next_state(change_state, intersection_state)
-        
         next_space = inside(shape_state, change_state)
         valid_mask = ~dr.eq(UInt32(next_space.tolist()), UInt32(cur_space.tolist()))
         num_valid_intersection = dr.select(valid_mask, num_valid_intersection + 1.0, num_valid_intersection)
-        its_result = dr.select(dr.eq(num_valid_intersection, 1.0), it[0], its_result)
+        # print(valid_mask)
+        its_result = dr.select(dr.eq(num_valid_intersection, 1.0) & valid_mask, it[0], its_result)
+        cur_space = next_space.copy()
+        # print(it[0].t, cur_space)
+        # print(its_result.t)
+        # print("\n")
+    # exit(0)
     return its_result
 
 # def intersect_csg_node(scene, rays, node):

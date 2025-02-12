@@ -14,6 +14,7 @@ from drjit.cuda.ad import Float as FloatD
 import numpy as np
 import random
 
+from csg import CSGLeaf, CSGNode, csg_intersect
 
 mi.set_variant('cuda_ad_rgb')
 from constant import DATA_DIR
@@ -21,7 +22,7 @@ from constant import DATA_DIR
 
 # print(type(mi.Float))
 
-NUMBER_NEUTRONS = 1000000
+NUMBER_NEUTRONS = 5000
 MAX_BOUNCE = 2
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
@@ -216,9 +217,10 @@ def sample_direction_hg(rng, wi, g):
 def sample_dir_from_unit_sphere(rng):
     v = dr.zeros(mi.Vector3f, NUMBER_NEUTRONS)
     sample1, sample2 = rng.next_float32(), rng.next_float32()
-    v.z = 1.0 - sample1
-    v.x  = sample1 * dr.sin(dr.pi * 2.0 * sample2)
-    v.y = sample1 * dr.cos(dr.pi * 2.0 * sample2)
+    v.z = (0.5 - sample1) * 2.0
+    sin_theta = dr.sqrt(1.0 - dr.power(v.z, 2.0))
+    v.x  = sin_theta * dr.sin(dr.pi * 2.0 * sample2)
+    v.y = sin_theta * dr.cos(dr.pi * 2.0 * sample2)
     return v
 
 # RETURN a float distance that is sampled proportional to the transmittance term
@@ -380,7 +382,84 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
     return t, mi.Vector2f(u, v), p
 
+def load_scene_node():
+    scene_dict = {
+        'type': 'scene',
+            # 'integrator': {
+            #     'type': 'path',
+            #     # Indirect visibility effects aren't that important here
+            #     # let's turn them off and save some computation time
+            #     # 'spp': 1,
+            # },
+        # 'emitter': {
+        #     'type': 'envmap',
+        #     'filename': "../scenes/textures/envmap2.exr",
+        # },
+        'A': {
+            'id': 'A',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/init.obj",
+            'bsdf': {'type': 'diffuse'}
+        },
+        'B': {
+            'id': 'B',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().translate([-0.5, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/init.obj",
+            'bsdf': {'type': 'diffuse'}
+        },
+    }
+    scene = mi.load_dict(scene_dict)
+    A = scene.shapes()[0]
+    B = scene.shapes()[1]
+    
+    shape0 = CSGLeaf(0)
+    shape1 = CSGLeaf(1)
 
+    node = CSGNode("intersection", shape0, shape1)
+    return scene, node
+
+
+
+def render_csg(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
+    rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
+    E_tot = dr.zeros(FloatD)
+    radiance = dr.zeros(FloatD, NUMBER_NEUTRONS) + 1.0
+    source_origin = mi.Point3f(0.0, 0, 0)
+    N_directions = sample_dir_from_unit_sphere(rng)
+
+    scene, material_node = load_scene_node()
+
+    params = mi.traverse(scene)
+
+    # print(params)
+    # exit(0)
+
+    V = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    F = dr.unravel(mi.Vector3i, params['A.faces'])
+    V.y = V.y + height
+    params['A.vertex_positions'] = dr.ravel(V)
+    dr.enable_grad(params['A.vertex_positions'])
+    params.update()
+
+    ray_init = mi.Ray3f(source_origin, N_directions)
+    # its = scene.ray_intersect(ray_init)
+    its = csg_intersect(scene, ray_init, material_node)
+    print(its.t)
+
+    import matplotlib.pyplot as plt
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+
+    ax.set_box_aspect([1, 1, 1])
+    ax.scatter(its.p.x, its.p.y, its.p.z, marker="o")
+    ax.set_xlabel('X Label')
+    ax.set_ylabel('Y Label')
+    ax.set_zlabel('Z Label')
+    
+
+    plt.show()
 
 def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
