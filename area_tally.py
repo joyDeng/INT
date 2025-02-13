@@ -399,14 +399,14 @@ def load_scene_node():
             'id': 'A',
             'type': 'obj',
             'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
-            'filename': "E:/Research/NeutronInv/INT/scene/init.obj",
+            'filename': "E:/Research/NeutronInv/INT/scene/torusA.obj",
             'bsdf': {'type': 'diffuse'}
         },
         'B': {
             'id': 'B',
             'type': 'obj',
-            'to_world': mi.ScalarTransform4f().translate([-0.5, 0.0, 0.0]),
-            'filename': "E:/Research/NeutronInv/INT/scene/init.obj",
+            'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/torusC.obj",
             'bsdf': {'type': 'diffuse'}
         },
     }
@@ -417,10 +417,17 @@ def load_scene_node():
     shape0 = CSGLeaf(0)
     shape1 = CSGLeaf(1)
 
-    node = CSGNode("intersection", shape0, shape1)
+    node = CSGNode("difference", shape0, shape1)
     return scene, node
 
-
+def torus(precision, c, a):
+    u = np.linspace(0, 2*np.pi, precision)
+    v = np.linspace(0, 2*np.pi, precision)
+    u, v = np.meshgrid(u, v)
+    x = (c+a*np.cos(v))*np.cos(u)
+    z = (c+a*np.cos(v))*np.sin(u)
+    y = a*np.sin(v)
+    return x, y, z
 
 def render_csg(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
@@ -452,12 +459,34 @@ def render_csg(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=T
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
 
-    ax.set_box_aspect([1, 1, 1])
-    ax.scatter(its.p.x, its.p.y, its.p.z, marker="o")
+    # ax.set_box_aspect([2.5, 2, 2])
+    ax.set_box_aspect([3, 1, 3])
+    ax.scatter(its.p.x, its.p.y, its.p.z, marker="o", color="g")
+    
+    # Make data
+    # u = np.linspace(0, 2 * np.pi, 100)
+    # v = np.linspace(0, np.pi, 100)
+    # x = 1 * np.outer(np.cos(u), np.sin(v))
+    # y = 1 * np.outer(np.sin(u), np.sin(v))
+    # z = 1 * np.outer(np.ones(np.size(u)), np.cos(v))
+
+    # c = radius = 1.0
+    # a = second_radius = 0.5
+    # precision = 100
+
+    x, y, z = torus(100, 1.0, 0.5)
+    x1, y1, z1 = torus(100, 1.0, 0.4)
+
+    # Plot the surface
+    ax.plot_surface(x, y, z, alpha=0.2, color="g")
+    ax.plot_surface(x1, y1, z1, alpha=0.2, color="g")
+    # ax.plot_surface(x-0.5, y, z, alpha=0.2, color="g")
+
+    # Set an equal aspect ratio
+    # ax.set_aspect('equal')
     ax.set_xlabel('X Label')
     ax.set_ylabel('Y Label')
     ax.set_zlabel('Z Label')
-    
 
     plt.show()
 

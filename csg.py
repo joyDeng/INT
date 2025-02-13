@@ -135,7 +135,6 @@ def get_init_state(its, shape_order, ray_num, geo_num, ray_dir):
         it = itersect[0]
         cur_active = itersect[1]
         shape_id = itersect[2]
-
         active_its = dr.select(cur_active, active_its+1, active_its)
 
         idx += 1
@@ -148,40 +147,55 @@ def get_init_state(its, shape_order, ray_num, geo_num, ray_dir):
         exit_pidx = pidx[np.where(exit_geo == True)]
         in_pidx = pidx[np.where(in_geo == True)]
 
+        # print("exit_rays", exit_rays)
+        # print("in_rays", in_rays)
+        # print("in_pidx", pidx)
+        
+
         # 0 in geometry, 1 out of geometry, -1 invalid intersection
-        trace_out_state = np.zeros([ray_num, geo_num], dtype=np.int32) - 1
+        trace_out_state = np.zeros([ray_num, geo_num], dtype=np.int32)
         trace_out_state[exit_rays, exit_pidx] = 1
-        trace_out_state[in_rays, in_pidx] = 0
+        trace_out_state[in_rays, in_pidx] = 1
         geo_states_list.append(trace_out_state)
+        # print(trace_out_state)
+        # print("\n")
 
 
     # summarize init state
-    init_state = np.zeros([ray_num, geo_num], dtype=np.int32) - 1
+    init_state = np.zeros([ray_num, geo_num], dtype=np.int32)
     for state in geo_states_list:
-        mask_0 = (state == 1) & ((init_state == -1) | (init_state == 0))
-        mask_1 = (state == 0) & ((init_state == -1) | (init_state == 1))
-        init_state[mask_0] = 1
-        init_state[mask_1] = 0
-    
+        # mask_0 = (state == 1) & ((init_state == -1) | (init_state == 0))
+        # mask_1 = (state == 0) & ((init_state == -1) | (init_state == 1))
+        # init_state[mask_0] = 1
+        # init_state[mask_1] = 0
+        init_state += state
+    # print(init_state = init_state % 2)
+    # exit(0)
     return init_state, geo_states_list
         
 
 def inside(insides, state):
     result = np.zeros(state.shape[0], dtype=np.int32)
     value = np.zeros(state.shape[1], dtype=np.int32)
+    process_state = state % 2
+    # print(process_state)
+    # exit(0)
     for cur_state in insides:
         temp = value + cur_state
-        matching_idx = np.where((temp == state).all(axis=1))[0]
+        # print(temp)
+        # print(state)
+        matching_idx = np.where((temp == process_state).all(axis=1))[0]
         result[matching_idx] = 1
-
+    # exit(0)
     return result
         
 
 def next_state(init_state, inter_state):
-    mask_0 = ((init_state == 1) & (inter_state == 1))
-    mask_1 = ((init_state == 0) & (inter_state == 0))
-    init_state[mask_0] = 0
-    init_state[mask_1] = 1
+    # mask_0 = ((init_state == 1) & (inter_state == 1))
+    # mask_1 = ((init_state == 0) & (inter_state == 0))
+    # init_state[mask_0] = 0
+    # init_state[mask_1] = 1
+    init_state += inter_state
     return init_state
 
 
@@ -209,7 +223,7 @@ def csg_intersect(scene, rays, csnode):
         # print(valid_mask)
         its_result = dr.select(dr.eq(num_valid_intersection, 1.0) & valid_mask, it[0], its_result)
         cur_space = next_space.copy()
-        # print(it[0].t, cur_space)
+        # print(it[0].t, cur_space, shape_state, init_state)
         # print(its_result.t)
         # print("\n")
     # exit(0)
