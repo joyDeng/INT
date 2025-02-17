@@ -213,6 +213,24 @@ def sample_direction_hg(rng, wi, g):
     wo = mi.Frame3f(wi).to_world(mi.Vector3f(sinTheta * dr.cos(phi), sinTheta * dr.sin(phi), cosTheta))
     return wo
 
+def sample_dir_from_unit_ring(rng, number_neutrons):
+    v = dr.zeros(mi.Vector3f, number_neutrons)
+    sample1 = rng.next_float32()
+    v.z = (0.5 - sample1) * 2.0
+    sin_theta = dr.sqrt(1.0 - dr.power(v.z, 2.0))
+    angle = dr.linspace(Float, 0.0, dr.pi * 2, number_neutrons)
+    v.x =  dr.sin(angle)
+    v.y =  dr.cos(angle)
+    print(v)
+    return v
+
+
+def test_ring():
+    rng = mi.PCG32(size=NUMBER_NEUTRONS,initstate=100)
+    v = sample_dir_from_unit_ring(rng, 100)
+    print(v)
+
+test_ring()
 
 def sample_dir_from_unit_sphere(rng):
     v = dr.zeros(mi.Vector3f, NUMBER_NEUTRONS)
@@ -899,3 +917,8 @@ def test_light_connection():
 
 #test_light_connection()
 # test_fd_ad()
+
+def ring_emitter_delta_direction(rng, nuetron_num):
+    rnd = rng.next_float32()
+    cos_theta = (1.0 - rnd)
+
