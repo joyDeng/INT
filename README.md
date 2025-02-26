@@ -4,3 +4,10 @@ Before running the code, install the [mitsuba](https://mitsuba.readthedocs.io/en
 pip install mitsuba
 ```
 <!-- simple_bounce.py -->
+
+Ray csg intersection is build upon mitsuba ray scene intersection api. 
+Example of creating a csg material can be find in csg.py test_1()
+
+Neutron transport simulation is implemented in area_tally.py.
+
+Shape optimizer is written in optimization.py
