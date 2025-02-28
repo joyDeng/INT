@@ -82,10 +82,10 @@ class CSGNode:
         return state_lists, left_order + right_order
 
 class SceneMaterial:
-    def __init__(self, csgnodes, cross_tots, cross_as, num_geo):
+    def __init__(self, csgnodes, cross_tots, albedos, num_geo):
         self.csg_node_list = csgnodes
         self.cross_tot_list = cross_tots
-        self.cross_a_list = cross_as
+        self.alb_list = albedos
         self.node_state_lists = [] 
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
@@ -103,7 +103,10 @@ class SceneMaterial:
     def __repr__(self):
         return f"there are {len(self.csg_node_list)} materials in the scene"
     
-
+class MaterialParameter:
+    def __init__(self, cross_tot_t, alb):
+        self.ext = cross_tot_t
+        self.alb = alb
 
 def get_shape_id(scene, shape_ptr):
     shape_id = dr.zeros(UInt32, dr.width(shape_ptr))
@@ -356,13 +359,15 @@ def ith_hit_from_current(itersect_list, material_spaces, num_rays, current_id):
     ith_intersect = dr.full(UInt32D, current_id, num_rays)
     its_result = dr.zeros(mi.SurfaceInteraction3f, num_rays)
     hit = dr.zeros(UInt32, num_rays)
+    shape_id = dr.zeros(UInt32, num_rays)
 
     for it, cur_space, next_space in zip(itersect_list, material_spaces[:-1], material_spaces[1:]):
         cross_material_boundary = ~dr.eq(UInt32D(cur_space), UInt32D(next_space))
         valid_ith_hit = dr.eq(UInt32D(hit), ith_intersect)
         its_result = dr.select(valid_ith_hit & cross_material_boundary, it[0], its_result)
+        shape_id = dr.select(valid_ith_hit & cross_material_boundary, it[2], shape_id)
         hit = dr.select(cross_material_boundary, hit+1, hit)
-    return its_result
+    return its_result, shape_id
 
 
 # visualization test
@@ -485,4 +490,4 @@ def test1():
     visualize_intersect(its, material_spaces, num_ray)
     
 
-test1()
+# test1()

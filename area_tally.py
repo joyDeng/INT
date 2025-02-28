@@ -15,7 +15,7 @@ from drjit.cuda.ad import UInt32 as UIntD
 import numpy as np
 import random
 
-from csg import CSGLeaf, CSGNode, csg_intersect
+from csg import CSGLeaf, CSGNode, SceneMaterial, MaterialParameter, scene_material_intersect, ith_hit_from_current
 
 mi.set_variant('cuda_ad_rgb')
 from constant import DATA_DIR
@@ -41,7 +41,7 @@ def torus(precision, c, a):
     y = a*np.sin(v)
     return x, y, z
 
-def load_scene_node():
+def load_scene_node(cross_tots, cross_as):
     scene_dict = {
         'type': 'scene',
             # 'integrator': {
@@ -70,14 +70,16 @@ def load_scene_node():
         },
     }
     scene = mi.load_dict(scene_dict)
-    A = scene.shapes()[0]
-    B = scene.shapes()[1]
+    # A = scene.shapes()[0]
+    # B = scene.shapes()[1]
     
     shape0 = CSGLeaf(0)
     shape1 = CSGLeaf(1)
 
     node = CSGNode("difference", shape0, shape1)
-    return scene, node
+    scm = SceneMaterial([node], cross_tots, cross_as, 2)
+    
+    return scene, scm
 
 def hg(costheta, g):
     demon = 1.0 + g * g + 2.0 * g * costheta
@@ -291,6 +293,7 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
     p = e1 * u + e2 * v
 
+    # the p is not comptued correctly here
     return t, mi.Vector2f(u, v), p
 
 
@@ -330,27 +333,6 @@ def visualize_intersect(its, c="green"):
 
     plt.show()
 
-# def render_csg(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
-#     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
-#     E_tot = dr.zeros(FloatD)
-#     radiance = dr.zeros(FloatD, NUMBER_NEUTRONS) + 1.0
-#     source_origin = mi.Point3f(0.0, 0, 0)
-#     N_directions = sample_dir_from_unit_sphere(rng)
-
-#     scene, material_node = load_scene_node()
-
-#     params = mi.traverse(scene)
-
-#     V = dr.unravel(mi.Point3f, params['A.vertex_positions'])
-#     F = dr.unravel(mi.Vector3i, params['A.faces'])
-#     V.y = V.y + height
-#     params['A.vertex_positions'] = dr.ravel(V)
-#     dr.enable_grad(params['A.vertex_positions'])
-#     params.update()
-
-#     ray_init = mi.Ray3f(source_origin, N_directions)
-#     its = csg_intersect(scene, ray_init, material_node)
-    
 
 def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_section_tot_a, seed, reparam=True):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
@@ -756,36 +738,150 @@ def test_light_connection():
 
 
 def recompute_intersect_csg(scene, its, Vs, Fs, ray, shape_id, active):
+    """
+    Return: distance from ray origin to the intersection, position of the intersection point
+    """
     interdist = dr.zeros(FloatD, dr.width(its))
     pos = dr.zeros(mi.Vector3f, dr.width(its))
     for i in range(len(Vs)):
         intersect_dist_i, uv, p = recomputeIntersection(scene, its, Vs[i], Fs[i], ray, its.is_valid() & dr.eq(UIntD(shape_id), i) & active)
         interdist = dr.select(dr.eq(UIntD(shape_id), i), intersect_dist_i, interdist)
         pos = dr.select(dr.eq(UIntD(shape_id), i), p, pos)
-        # print("p before interesct", its.p.numpy()[1966])
-        # print("p", p.numpy()[1966])
-        # print("intersect_dist_i", intersect_dist_i.numpy()[1966])
-        # print("shape_id", shape_id.numpy()[1966])
-        # print("i", i)
-        # print(pos.numpy()[1966])
-        # print(interdist.numpy()[1966])
-        # print("\n")
+        # print(interdist.numpy()[9143], i, p.numpy()[9143], its.p.numpy()[9143])
     return interdist, pos
 
-def simulate_neutron_in_csg_shape(cross_section_tot_t, cross_section_tot_a, seed, height, reparam=False):
+def sample_attenuation_along_ray(material_spaces, ray, scm, rng):
+    """
+    Return: sample the an attenuation along the ray, and it's pdf
+    Parameters:
+        material_space: list of material idx along ray
+        ray,
+        scm: material information
+        rng: random number generator
+    """
+    num_rays = dr.width(ray)
+    sample_ext_list = FloatD(scm.cross_tot_list)
+    sample_alb_list = FloatD(scm.alb_list)
+    cross_section_tots = dr.zeros(FloatD, num_rays)
+    albedos = dr.zeros(FloatD, num_rays)
+
+    medium_count = dr.zeros(UIntD, num_rays)
+    medium_idx = dr.full(UIntD, scm.num_geo, num_rays)
+    # active_sample = True
+    # print("\n\n sample attenuation")
+    for cur_space in material_spaces[:-1]:
+        in_medium = ~dr.eq(UIntD(cur_space), scm.num_geo)
+        in_medium_idx =  np.where(in_medium.numpy() > 0)
+        # print("in medium", cur_space.numpy()[in_medium_idx])
+        medium_count += dr.select(in_medium, 1, 0)
+        medium_idx = dr.select(dr.eq(medium_count, 1) & in_medium, cur_space, medium_idx)
+    # print("\n")
+
+    through_vaccum = dr.eq(medium_idx, scm.num_geo)
+    # print("number of vaccum ray", dr.sum(through_vaccum), medium_idx)
+    # exit(0)
+    medium_idx = dr.select(through_vaccum, 0, medium_idx)
+    
+    cross_section_tots = dr.gather(FloatD, sample_ext_list, medium_idx)
+    albedos = dr.gather(FloatD, sample_alb_list, medium_idx)
+    
+    distance_sample = sample_distance(cross_section_tots, rng)
+    distance_sample = dr.select(through_vaccum, 0.0, distance_sample)
+
+    attenuation_sample = dr.exp(-distance_sample * cross_section_tots)
+
+    pdf = dr.detach(cross_section_tots * attenuation_sample)
+    features = MaterialParameter(cross_section_tots, albedos)
+    return attenuation_sample, pdf, features, through_vaccum
+
+def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng):
+    """
+    Return: the attenuation of the energy along the ray, and tot distance in the medium along the ray
+    Parameters:
+        all_its: all intersection list, each element is structured as [mi.surfaceintersect, active, shape_id]
+        material_spaces: list of material along the ray
+        scm: material properties along the ray
+    """
+    ray = mi.Ray3f(ray_pass)
+    num_rays = dr.width(ray)
+    cross_section_tots = FloatD(scm.cross_tot_list)
+    attenuation = dr.ones(FloatD, num_rays)
+    distance_tot = dr.zeros(FloatD, num_rays)
+    cur_cross_section_tots = dr.zeros(FloatD, num_rays)
+
+    attenuation_sample, pdf, features, tv = sample_attenuation_along_ray(material_spaces, ray, scm, rng)
+    scatter_pos = ray.o
+    end_pos = ray.o
+    nerest_hit_from_scatter_pos = dr.zeros(mi.Point3f, num_rays)
+    sample_active = True & ~tv
+
+    i = 0
+    for intersect, current_material in zip(all_its, material_spaces[:-1]):
+        cur_is_valid = intersect[1]
+        distance, p = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
+        material_idx = UIntD(current_material)
+        # no attenuation in vaccum
+        in_medium = ~dr.eq(material_idx, scm.num_geo)
+        material_idx = dr.select(in_medium, material_idx, 0)
+        # get cross_section_value of materials
+        cur_cross_section_tots = dr.gather(FloatD, cross_section_tots, material_idx)
+        update_attenuation = dr.select(in_medium, dr.exp(-distance * cur_cross_section_tots), 1.0)
+        stop_sample_in_current_space = (attenuation * update_attenuation < attenuation_sample) & sample_active
+        residual_attenuation = dr.select(stop_sample_in_current_space, attenuation_sample / attenuation, 1.0)
+
+
+        update_dist = - dr.log(residual_attenuation) / cur_cross_section_tots
+        # update pdf with current attenuation
+        pdf =  dr.select(stop_sample_in_current_space, cur_cross_section_tots * residual_attenuation, pdf)
+
+        scatter_pos = dr.select(stop_sample_in_current_space, ray.o + update_dist * ray.d, scatter_pos)
+        nerest_hit_from_scatter_pos = dr.select(stop_sample_in_current_space, ray.o, nerest_hit_from_scatter_pos)
+        
+        sample_active &= ~(stop_sample_in_current_space)
+        # print("scatter_pos", scatter_pos)
+        # print("nerest_hit_from_scatter_pos", nerest)
+        
+        attenuation *= update_attenuation
+        distance_tot += dr.select(in_medium, distance, 0.0)
+        # update the ray origin
+        ray.o += distance * ray.d
+        # end_pos = dr.select(~sample_active, ray.o, end_pos)
+        # idx = np.where(sample_active.numpy() > 0)
+        # print(i, (dr.norm(scatter_pos - ray.o)).numpy()[idx])
+        # print("divide by zero", np.where(dr.isnan(1.0 / dr.norm(scatter_pos - ray.o)).numpy() == True))
+        # i += 1
+        end_pos = dr.select(cur_is_valid, ray.o, end_pos)
+
+        # print(dr.norm(end_pos - ray_pass.o))
+    # exit(0)
+    # terminate ray if the sample point go beyond the range. exclude the ray travel through vaccuum
+    terminate_ray = sample_active
+    return attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, nerest_hit_from_scatter_pos, end_pos, features, terminate_ray
+
+
+def sample_direction_from_linear_source(num_ray):
+    v = dr.zeros(mi.Vector3f, num_ray)
+    v.x = -1.0
+    o = dr.zeros(mi.Vector3f, num_ray)
+    o.x = 5.0
+    o.z = dr.linspace(Float, -1.0, 1.0, num_ray)
+    return v, o
+
+def simulate_neutron_in_csg_shape(seed, height, reparam=False):
+
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
     # set up tally that exit the shape
-    E_tot = dr.zeros(FloatD)
-
+    Etot = dr.zeros(FloatD)
     radiance = dr.zeros(FloatD, NUMBER_NEUTRONS) + 1.0
     
     # generate rays
-    ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
-    ray_init = mi.Ray3f(ray_origin, ray_vec)
+    # ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
+    ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
+    ray_current = mi.Ray3f(ray_origin, ray_vec)
     
     # load scene
     # temp example, a scene with torus
-    scene, material_node = load_scene_node()
+    scene, scm = load_scene_node([1.5], [0.9])
     params = mi.traverse(scene)
     # get scene parameter for optimization
     Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
@@ -800,118 +896,67 @@ def simulate_neutron_in_csg_shape(cross_section_tot_t, cross_section_tot_a, seed
     dr.enable_grad(params['B.vertex_positions'])
     params.update()
 
-    # print("gradients")
-    its, io, shape_id = csg_intersect(scene, ray_init, material_node)
-    # TODO refine this to filter validation of va and vb
-
-
-    interdist, p0 = recompute_intersect_csg(scene, its, [Va, Vb], [Fa, Fb], ray_init, shape_id, its.is_valid())
-    
-    #interdistA, uv, activei = recomputeIntersection(scene, its, Va, Fa, ray_init,  its.is_valid() & dr.eq(UIntD(shape_id), 0))
-    #interdistB, uv, activei = recomputeIntersection(scene, its, Vb, Fb, ray_init,  its.is_valid() & dr.eq(UIntD(shape_id), 1))
-    #interdist = dr.select(dr.eq(UIntD(shape_id), 1), interdistB, interdistA)
-
+    vertices_list = [Va, Vb]
+    faces_list = [Fa, Fb]
     active = True
-    active &= its.is_valid()
-    its.p = interdist * ray_vec + ray_init.o
-    ray_current = its.spawn_ray(ray_init.d)
-    # color = ['red', 'green', 'blue']
+
 
     for i in range(MAX_BOUNCE):
-        #print("loop id ", i)
-        its, io, shape_id = csg_intersect(scene, ray_current, material_node)
-        #remain_dist_a, uv, ptheta_a = recomputeIntersection(scene, its, Va, Fa, ray_current, its.is_valid() & active & dr.eq(UIntD(shape_id), 0))
-        #print("radiance", radiance)
-        #remain_dist_b, uv, ptheta_b = recomputeIntersection(scene, its, Vb, Fb, ray_current, its.is_valid() & active & dr.eq(UIntD(shape_id), 1))
-        #print("remain_dist", remain_dist_a)
-        #remain_dist = dr.select(dr.eq(UIntD(shape_id), 1) & active & its.is_valid(), remain_dist_b, dr.select(dr.eq(UIntD(shape_id), 0) & active & its.is_valid(), remain_dist_a, 0.0))
-        #print("renmain dist", remain_dist)
-
+        # get all intersection along current ray
+        all_its, material_spaces = scene_material_intersect(scene, ray_current, scm)
+        # compute and sample attenuation TODO add a return of termination in this function
+        attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, start_pos, end_pos, feature, terminate_ray = sample_and_compute_attenuation_along_ray(scene, 
+                                                                  all_its, material_spaces, 
+                                                                  ray_current, scm, 
+                                                                  vertices_list, faces_list, rng)
         
-        #arrive_energy = (radiance) & active & escape 
-        # print("arraive")
-        # E_tot +
-        if i > 0:
-            # sample an outgoing direction by sampling unit sphere
-            connect_out_dir = sample_dir_from_unit_sphere(rng)
-            
-            ray_connect = mi.Ray3f(ray_current.o, connect_out_dir)
-            connect_its, connect_io, connect_shape_id = csg_intersect(scene, ray_connect, material_node)
-            connect_dist, ptheta = recompute_intersect_csg(scene, connect_its, [Va, Vb], [Fa, Fb], ray_connect, connect_shape_id, active & connect_its.is_valid())
-            # print(active)
-            # ptheta = dr.select(dr.eq(UIntD(shape_id), 1) & active & its.is_valid(), ptheta_b, dr.select(dr.eq(UIntD(shape_id), 0) & active & its.is_valid(), ptheta_a, ptheta_a))
-            wo_connect = (ptheta - ray_current.o) / dr.norm(ptheta - ray_current.o)
 
-            #if reparam:
-                #tot_cross_section_reparam_t, tot_cross_section_reparam_a, connect_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, connect_dist, 1.0)
-            #ßelse:
-                #tot_cross_section_reparam_t, tot_cross_section_reparam_a, connect_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, connect_dist, 1.0
-            #  transmittance
-            # if i > 0:
-            # 
-            # print(cross_section_tot_t)
-            # print(connect_dist)
-            # print(active)
-            # print(dr.max(connect_dist * cross_section_tot_t & active & connect_its.is_valid()))
-            # print(dr.max(connect_dist & active & connect_its.is_valid()))
-            # vdist = connect_dist.numpy()
-            # print(vdist)
-            # vdist[np.isnan(vdist)] = 0.0
-            # idx = np.argmax(vdist)
-            # print("idx", idx)
-            
-            # print("intersection points", ptheta.numpy()[idx])
-            # exit(0)
-            fp_connect = hg(dr.dot(wi, wo_connect), AVERAGE_COS)
-            e = radiance * fp_connect * dr.exp(-cross_section_tot_t * connect_dist)  * np.pi * 4.0 * scatter_function & active & connect_its.is_valid()
-            E_tot += dr.sum(e & ~dr.isnan(e))
-
-
-        remain_dist, ptheta = recompute_intersect_csg(scene, its, [Va, Vb], [Fa, Fb], ray_current, shape_id, its.is_valid() & active)
-
-        if reparam:
-            tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_nor(cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0)
-        else:
-            tot_cross_section_reparam_t, tot_cross_section_reparam_a, remain_dist_reparam, jacobian_reparam = cross_section_tot_t, cross_section_tot_a, remain_dist, 1.0
-        
-        dist_reparam = sample_distance(tot_cross_section_reparam_t, rng)
-        optical_dist = dr.select(remain_dist_reparam <= dist_reparam, remain_dist_reparam, dist_reparam)
-        transmittance = dr.exp(-tot_cross_section_reparam_t * optical_dist)
-        dist_pdf = dr.detach(dr.select(remain_dist_reparam <= dist_reparam,  transmittance, tot_cross_section_reparam_t * transmittance))
-        # update current position of the neutron
         if i == 0:
-            E_tot += dr.sum(radiance * transmittance & active)
+        # accumulate to the tally
+            # print(np.where(dr.isinf(attenuation * radiance & active).numpy() == 1))
+            # print(attenuation.numpy()[9143], radiance.numpy()[9143])
+            # Etot += dr.sum(attenuation * radiance & active)
+            pass
         else:
-            radiance *= hg_continue
-        
-        dist = dist_reparam * jacobian_reparam
-        escape = (dist > remain_dist)
+            wo_theta = (end_pos - ray_current.o) / dr.norm(end_pos - ray_current.o)
+            # print("is nan", np.where(dr.isnan(wo_theta & active).numpy() == 1))
+            fp = hg(dr.dot(wo_theta, wi_theta), AVERAGE_COS)
+            Etot += dr.sum(attenuation * radiance * fp / dr.detach(fp) & active)
 
-        active &= ~escape
-        # dr.eval(E_tot)
-        #print(E_tot)
-        radiance *= (transmittance / dist_pdf)
+        # reparameterize at the scattering position
+        if reparam:
+            cross_section_reparam_t = feature.ext * distance_tot
+        else:
+            cross_section_reparam_t = feature.ext
         
-        # continue scattering and sample direction 
-        #radiance *= 
-
-        p0 = dist * ray_current.d + ray_current.o
-        wi = (ray_current.o - p0) / dr.norm(ray_current.o - p0)
-        ray_current.o = p0
+        active &= (~terminate_ray)
+        
+   
+        # phase function, sample a direction
         wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
-        fp = hg(dr.dot(wo, ray_current.d), AVERAGE_COS)
-        # radiance *= fp / dr.detach(fp)
-        # print('new direction')
-        hg_continue = fp / dr.detach(fp)
-        scatter_function = (tot_cross_section_reparam_t - tot_cross_section_reparam_a)
+        # TODO: ray_current.o should be the point that enter the current medium
+        wi_theta = (start_pos - scatter_pos) / dr.norm(start_pos - scatter_pos)
+        
+        # print(scatter_pos)
+        # print(start_pos)
+        # print(terminate_ray)
+        # fp = hg(dr.dot(wo, wi_theta), AVERAGE_COS)
+        # print(np.where(dr.isnan(fp & active).numpy() == 1))
+        radiance *= (attenuation_sample / pdf) * (cross_section_reparam_t * feature.alb) 
+
+        # update ray
+        ray_current.o = scatter_pos
         ray_current.d = wo
     
-    return E_tot / NUMBER_NEUTRONS
+    return Etot / NUMBER_NEUTRONS
     
 
 
 # test and visualize
-# simulate_neutron_in_csg_shape(1.5, 0.2, 10, 0.01, False)
+# value = simulate_neutron_in_csg_shape(1, 0.01, False)
+# print(value)
+# value = simulate_neutron_in_csg_shape(2, 0.01, False)
+# print(value)
 
 def test_fd(k):
     N = 20
@@ -919,11 +964,11 @@ def test_fd(k):
     # test gradient computation in ring and torus
     grad_list = []
     for i in range(N):
-        v1 = simulate_neutron_in_csg_shape(1.5, 0.1, i + k * N, 0.01 + 0.005, False)
-        #print("Etot(h+delta) id", i, v1)
-        v2 = simulate_neutron_in_csg_shape(1.5, 0.1, i + k * N, 0.01 - 0.005, False)
-        #print("Etot(h-delta)", v2)
-        gradient = (v1 - v2) / 0.01
+        v1 = simulate_neutron_in_csg_shape(i + k * N, 0.01 + 0.002, False)
+        # print("Etot(h+delta) id", i, v1)
+        v2 = simulate_neutron_in_csg_shape(i + k * N, 0.01 - 0.002, False)
+        # print("Etot(h-delta)", v2)
+        gradient = (v1 - v2) / 0.004
         dr.eval(gradient)
         del v2, v1
         g += gradient / N
@@ -931,19 +976,19 @@ def test_fd(k):
         del gradient
         gradients_array = np.array(grad_list)
         np.save( f"gradient_fd_{k}.npy", gradients_array)
-        print("finite difference gradient", g * N / (i+1))
+        # print("finite difference gradient", g * N / (i+1))
     print("finite difference gradient avg across", N, g)
 
-    # dvdh = FloatD(0.0)
-    # for i in range(N):
-    #     height = FloatD(0.01)
-    #     dr.enable_grad(height)
-    #     v = simulate_neutron_in_csg_shape(1.5, 0.1, i, height, True)
-    #     dr.backward(v)
-    #     dvdh += dr.grad(height) / N
-    #     del v
-    #     print("auto dif grandients avg across", i, dvdh * N / (i+1))
-    # print("auto dif grandients avg across", N, dvdh)
+    dvdh = FloatD(0.0)
+    for i in range(N):
+        height = FloatD(0.01)
+        dr.enable_grad(height)
+        v = simulate_neutron_in_csg_shape(i, height, True)
+        dr.backward(v)
+        dvdh += dr.grad(height) / N
+        del v
+        # print("auto dif grandients avg across", i, dvdh * N / (i+1))
+    print("auto dif grandients avg across", N, dvdh)
     
 
-test_fd(3)
+#test_fd(0)
