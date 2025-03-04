@@ -186,7 +186,7 @@ def material_node_ids(scm, space_state, ray_num):
         space_state: state that we want to identify the material state
         ray_num: numbers of ray in parallel
     """
-    material_ids = dr.zeros(UInt32, ray_num) + scm.num_geo
+    material_ids = dr.zeros(UInt32, ray_num) + scm.num_material
     query_state_binary = space_state % 2
     for node_id in range(len(scm.csg_node_list)):
         in_node = inside_by_node_id(query_state_binary, scm, node_id)
@@ -204,7 +204,7 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     #   ray_num: number of ray in parallel
     #   ray_dir: direction of the ray is traveling TODO: this parameter might not be neccessary
     """
-    init_material_id = dr.zeros(UInt64, ray_num) + scm.num_geo
+    # init_material_id = dr.zeros(UInt64, ray_num) + scm.num_material
     geo_state_list = []
     idx = 0
 

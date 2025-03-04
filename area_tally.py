@@ -264,7 +264,7 @@ def calculate_tally_energy(tally, sheilding, cross_section_tot_t, cross_section_
     return E_tot / NUMBER_NEUTRONS
 
 
-def recomputeIntersection(scene, its, v, f, ray, active):
+def recomputeIntersection(scene, its, v, f, ray, active, debug=False, id=0):
     intersect = True & active
     faces = dr.gather(mi.Vector3i, f, its.prim_index, active)
 
@@ -293,8 +293,18 @@ def recomputeIntersection(scene, its, v, f, ray, active):
 
     p = e1 * u + e2 * v
 
+    # if debug:
+    #     print("p0, p1, p2", p0.numpy()[id], p1.numpy()[id], p2.numpy()[id])
+    #     print("e1, e2:", e1.numpy()[id], e2.numpy()[id])
+    #     print("pvec, tvec:", pvec.numpy()[id], tvec.numpy()[id])
+    #     print("intersection point", p.numpy()[id])
+    #     print("inv_det", inv_det.numpy()[id])
+    #     print("distance", t.numpy()[id])
+    #     print("its.p", its.p.numpy()[7505])
+    #     print(dr.isinf(inv_det).numpy()[7505])
+
     # the p is not comptued correctly here
-    return t, mi.Vector2f(u, v), p
+    return t, mi.Vector2f(u, v), p, intersect
 
 
 def visualize_intersect(its, c="green"):
@@ -304,7 +314,7 @@ def visualize_intersect(its, c="green"):
 
     # ax.set_box_aspect([2.5, 2, 2])
     ax.set_box_aspect([3, 1, 3])
-    ax.scatter(its.p.x, its.p.y, its.p.z, marker="o", color=c)
+    ax.scatter(its.x, its.y, its.z, marker="o", color=c)
     
     # Make data
     # u = np.linspace(0, 2 * np.pi, 100)
@@ -318,7 +328,7 @@ def visualize_intersect(its, c="green"):
     # precision = 100
 
     x, y, z = torus(100, 1.0, 0.5)
-    x1, y1, z1 = torus(100, 1.0, 0.4)
+    x1, y1, z1 = torus(100, 1.0, 0.3)
 
     # Plot the surface
     ax.plot_surface(x, y, z, alpha=0.2, color="g")
@@ -742,13 +752,28 @@ def recompute_intersect_csg(scene, its, Vs, Fs, ray, shape_id, active):
     Return: distance from ray origin to the intersection, position of the intersection point
     """
     interdist = dr.zeros(FloatD, dr.width(its))
-    pos = dr.zeros(mi.Vector3f, dr.width(its))
+    pos = dr.zeros(mi.Vector3f, dr.width(its)) + ray.o
+    # print("\n\n ")
+    valid_intersect = False
     for i in range(len(Vs)):
-        intersect_dist_i, uv, p = recomputeIntersection(scene, its, Vs[i], Fs[i], ray, its.is_valid() & dr.eq(UIntD(shape_id), i) & active)
-        interdist = dr.select(dr.eq(UIntD(shape_id), i), intersect_dist_i, interdist)
-        pos = dr.select(dr.eq(UIntD(shape_id), i), p, pos)
-        # print(interdist.numpy()[9143], i, p.numpy()[9143], its.p.numpy()[9143])
-    return interdist, pos
+        intersect_dist_i, uv, p, intersect = recomputeIntersection(scene, its, Vs[i], Fs[i], ray, its.is_valid() & dr.eq(UIntD(shape_id), i) & active)
+        valid_intersect = dr.select(dr.eq(UIntD(shape_id), i), intersect, valid_intersect)
+        interdist = dr.select(dr.eq(UIntD(shape_id), i) & active & intersect, intersect_dist_i, interdist)
+        pos = dr.select(dr.eq(UIntD(shape_id), i) & active & intersect, ray.o + intersect_dist_i * ray.d, pos)
+        # print("\n")
+        # print(intersect.numpy()[7505], its.is_valid().numpy()[7505])
+    #     print("shape_id", i, intersect_dist_i[7505], interdist.numpy()[7505], p.numpy()[7505], its.p.numpy()[7505])
+    # print("shape_id", interdist.numpy()[7505], pos.numpy()[7505])
+    # print("\n\n ")
+
+        # print("Is distance smaller than zero: ", dr.any(interdist < 0.0))
+        # print("ray origin", ray.o.numpy()[7505])
+        # print("ray vec", ray.d.numpy()[7505])
+        # print("intersection poinit", its.p.numpy()[7505], its.t.numpy()[7505], interdist.numpy()[7505], shape_id.numpy()[7505], active.numpy()[7505])
+        # if dr.any(interdist < 0.0):
+        #     exit(0)
+
+    return interdist, pos, valid_intersect
 
 def sample_attenuation_along_ray(material_spaces, ray, scm, rng):
     """
@@ -766,18 +791,20 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng):
     albedos = dr.zeros(FloatD, num_rays)
 
     medium_count = dr.zeros(UIntD, num_rays)
-    medium_idx = dr.full(UIntD, scm.num_geo, num_rays)
+    medium_idx = dr.full(UIntD, scm.num_material, num_rays)
+    # print(scm.num_material, scm.num_geo)
+    # exit(0)
     # active_sample = True
     # print("\n\n sample attenuation")
     for cur_space in material_spaces[:-1]:
-        in_medium = ~dr.eq(UIntD(cur_space), scm.num_geo)
-        in_medium_idx =  np.where(in_medium.numpy() > 0)
+        in_medium = ~dr.eq(UIntD(cur_space), scm.num_material)
+        # in_medium_idx =  np.where(in_medium.numpy() > 0)
         # print("in medium", cur_space.numpy()[in_medium_idx])
         medium_count += dr.select(in_medium, 1, 0)
         medium_idx = dr.select(dr.eq(medium_count, 1) & in_medium, cur_space, medium_idx)
     # print("\n")
 
-    through_vaccum = dr.eq(medium_idx, scm.num_geo)
+    through_vaccum = dr.eq(medium_idx, scm.num_material)
     # print("number of vaccum ray", dr.sum(through_vaccum), medium_idx)
     # exit(0)
     medium_idx = dr.select(through_vaccum, 0, medium_idx)
@@ -810,19 +837,30 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     cur_cross_section_tots = dr.zeros(FloatD, num_rays)
 
     attenuation_sample, pdf, features, tv = sample_attenuation_along_ray(material_spaces, ray, scm, rng)
-    scatter_pos = ray.o
-    end_pos = ray.o
+    scatter_pos = ray_pass.o
+    end_pos = ray_pass.o
     nerest_hit_from_scatter_pos = dr.zeros(mi.Point3f, num_rays)
-    sample_active = True & ~tv
+    sample_active = ~tv
+    numerical_mask = False
 
-    i = 0
+    # i = 0
+    # print("\n\n\nnew scattering")
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
         cur_is_valid = intersect[1]
-        distance, p = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
+        distance, p, valid_intersect = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
+        # cur_is_valid &= valid_intersect
+
+        numerical_mask |= dr.select(~dr.eq(valid_intersect, intersect[0].is_valid()) & cur_is_valid, True, False)
+        # print("active_mask 118", i, valid_intersect.numpy()[118], intersect[0].is_valid()[118], numerical_mask.numpy()[118])
+        # print("active_mask 750", i, valid_intersect.numpy()[750], intersect[0].is_valid()[750], numerical_mask.numpy()[750])
+        # print("\n")
+        # active_ray &= (cur_is_valid & valid_intersect)
+        # sample_active &= valid_intersect
         material_idx = UIntD(current_material)
         # no attenuation in vaccum
-        in_medium = ~dr.eq(material_idx, scm.num_geo)
+        in_medium = ~dr.eq(material_idx, scm.num_material)
         material_idx = dr.select(in_medium, material_idx, 0)
+
         # get cross_section_value of materials
         cur_cross_section_tots = dr.gather(FloatD, cross_section_tots, material_idx)
         update_attenuation = dr.select(in_medium, dr.exp(-distance * cur_cross_section_tots), 1.0)
@@ -835,6 +873,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         pdf =  dr.select(stop_sample_in_current_space, cur_cross_section_tots * residual_attenuation, pdf)
 
         scatter_pos = dr.select(stop_sample_in_current_space, ray.o + update_dist * ray.d, scatter_pos)
+        # print("scattering pose", i, stop_sample_in_current_space.numpy()[118], "ray origin", ray.o.numpy()[118], "update_distance", update_dist.numpy()[118], ray.d.numpy()[118], distance.numpy()[118], "valid_intersect", valid_intersect[118])
         nerest_hit_from_scatter_pos = dr.select(stop_sample_in_current_space, ray.o, nerest_hit_from_scatter_pos)
         
         sample_active &= ~(stop_sample_in_current_space)
@@ -844,19 +883,22 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         attenuation *= update_attenuation
         distance_tot += dr.select(in_medium, distance, 0.0)
         # update the ray origin
+        # print("end pos", i, distance.numpy()[118], scatter_pos.numpy()[618], ray.o.numpy()[618], attenuation_sample.numpy()[618], update_dist.numpy()[618], attenuation.numpy()[618], in_medium.numpy()[618])
         ray.o += distance * ray.d
         # end_pos = dr.select(~sample_active, ray.o, end_pos)
         # idx = np.where(sample_active.numpy() > 0)
         # print(i, (dr.norm(scatter_pos - ray.o)).numpy()[idx])
         # print("divide by zero", np.where(dr.isnan(1.0 / dr.norm(scatter_pos - ray.o)).numpy() == True))
+        
+        end_pos = dr.select(cur_is_valid & valid_intersect, ray.o, end_pos)
+        
         # i += 1
-        end_pos = dr.select(cur_is_valid, ray.o, end_pos)
-
-        # print(dr.norm(end_pos - ray_pass.o))
+        # print(dr.norm(end_pos - ray_pass.o).numpy()[2531], distance.numpy()[2531], cur_is_valid.numpy()[2531], intersect[0].t.numpy()[2531])
     # exit(0)
     # terminate ray if the sample point go beyond the range. exclude the ray travel through vaccuum
-    terminate_ray = sample_active
-    return attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, nerest_hit_from_scatter_pos, end_pos, features, terminate_ray
+    # print(sample_active.numpy()[118])
+    exit_ray = sample_active
+    return attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, nerest_hit_from_scatter_pos, end_pos, features, exit_ray, numerical_mask
 
 
 def sample_direction_from_linear_source(num_ray):
@@ -904,21 +946,27 @@ def simulate_neutron_in_csg_shape(seed, height, reparam=False):
     for i in range(MAX_BOUNCE):
         # get all intersection along current ray
         all_its, material_spaces = scene_material_intersect(scene, ray_current, scm)
-        # compute and sample attenuation TODO add a return of termination in this function
-        attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, start_pos, end_pos, feature, terminate_ray = sample_and_compute_attenuation_along_ray(scene, 
+        attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, start_pos, end_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
                                                                   vertices_list, faces_list, rng)
         
 
+        terminate_ray = mask_invalid | exit_ray
         if i == 0:
         # accumulate to the tally
             # print(np.where(dr.isinf(attenuation * radiance & active).numpy() == 1))
             # print(attenuation.numpy()[9143], radiance.numpy()[9143])
             # Etot += dr.sum(attenuation * radiance & active)
+            # visualize_intersect(scatter_pos & ~exit_ray & ~mask_invalid, "red")
+            # print(exit_ray.numpy()[118])
+            # print(np.where(((scatter_pos.z > 0.5) & mask_invalid & ~exit_ray).numpy() == True))
+            # exit(0)
+            # print(np.where(dr.eq(scatter_pos.x, 5.0) & active & ~terminate_ray).numpy() > 0.0)
             pass
         else:
             wo_theta = (end_pos - ray_current.o) / dr.norm(end_pos - ray_current.o)
+            
             # print("is nan", np.where(dr.isnan(wo_theta & active).numpy() == 1))
             fp = hg(dr.dot(wo_theta, wi_theta), AVERAGE_COS)
             Etot += dr.sum(attenuation * radiance * fp / dr.detach(fp) & active)
@@ -953,8 +1001,9 @@ def simulate_neutron_in_csg_shape(seed, height, reparam=False):
 
 
 # test and visualize
-# value = simulate_neutron_in_csg_shape(1, 0.01, False)
+# value = simulate_neutron_in_csg_shape(5, 0.01 + 0.002, False)
 # print(value)
+# value = simulate_neutron_in_csg_shape(5, 0.01 - 0.002, False)
 # value = simulate_neutron_in_csg_shape(2, 0.01, False)
 # print(value)
 
@@ -976,19 +1025,19 @@ def test_fd(k):
         del gradient
         gradients_array = np.array(grad_list)
         np.save( f"gradient_fd_{k}.npy", gradients_array)
-        # print("finite difference gradient", g * N / (i+1))
+        print("finite difference gradient", g * N / (i+1))
     print("finite difference gradient avg across", N, g)
 
-    dvdh = FloatD(0.0)
-    for i in range(N):
-        height = FloatD(0.01)
-        dr.enable_grad(height)
-        v = simulate_neutron_in_csg_shape(i, height, True)
-        dr.backward(v)
-        dvdh += dr.grad(height) / N
-        del v
-        # print("auto dif grandients avg across", i, dvdh * N / (i+1))
-    print("auto dif grandients avg across", N, dvdh)
+    # dvdh = FloatD(0.0)
+    # for i in range(N):
+    #     height = FloatD(0.01)
+    #     dr.enable_grad(height)
+    #     v = simulate_neutron_in_csg_shape(i, height, True)
+    #     dr.backward(v)
+    #     dvdh += dr.grad(height) / N
+    #     del v
+    #     print("auto dif grandients avg across", i, dvdh * N / (i+1))
+    # print("auto dif grandients avg across", N, dvdh)
     
 
-#test_fd(0)
+test_fd(3)
