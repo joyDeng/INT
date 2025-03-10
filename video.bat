@@ -1,1 +1,1 @@
-ffmpeg -framerate 23 -i opt_%d.png -c:v libx264 -r 30 -pix_fmt yuv420p output.mp4
+ffmpeg -framerate 23 -i opt_%d_csg.png -c:v libx264 -r 30 -pix_fmt yuv420p output_csg.mp4

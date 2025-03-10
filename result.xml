@@ -10,7 +10,7 @@
         <float name="fov" value="45"/>
         <transform name="to_world">
             <!-- Rotate camera clockwise by 45 degrees along the y-axis -->
-            <lookat origin="0, 0, 25" target="0, 0, 0" up="0, 1, 0"/>
+            <lookat origin="0, 10, 0" target="0, 0, 0" up="0, 0, 1"/>
         </transform>
         <sampler type="independent">
             <integer name="sample_count" value="64"/>
@@ -47,7 +47,7 @@
     <emitter type="directional">
         <spectrum name="irradiance" value="1.0"/>
         <transform name="to_world">
-            <lookat origin="1, 1, 1" target="0, 0, 0" up="0, 1, 0"/>
+            <lookat origin="0, 1, 0" target="0, 0, 0" up="1, 0, 0"/>
         </transform>
     </emitter>
 

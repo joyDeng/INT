@@ -169,5 +169,36 @@ def presentationPlot():
     plt.show()
     
   
-
+def render_geo(scenefile, iters):
+    CURRENT_TEMP_DIR = "E:\Research\data\psdr_jit\camera_ready_geo\\tempginko\\"
+    scene = mi.load_file(DATA_DIR + scenefile)
+    param = mi.traverse(scene)
+    #for i in range(iters)
+    for i in range(iters):
+        
+        id = i * 50
+        print(id)
+        if (id >= 500) and (id < 600):
+            continue
+        objs = mi.load_dict({
+            'type': 'obj',
+            'filename':CURRENT_TEMP_DIR + f"displacement_iter{id}.obj",
+            'bsdf':{
+                'type':'diffuse',
+                'reflectance':{'type':'rgb', 'value':(0.5, 0.8, 0.65)}
+            }
+        })
+        ltemp_ply = mi.traverse(objs)
+        # print(ltemp_ply)
+        # exit(0)
+   
+        param['shield.vertex_positions'] = ltemp_ply["vertex_positions"]
+        param['shield.faces'] = ltemp_ply["faces"]
+        param['shield.vertex_normals'] = ltemp_ply["vertex_normals"]
+        param['shield.vertex_texcoords'] = ltemp_ply["vertex_texcoords"]
+        # param['shield.faces'] = ltemp_ply["faces"]
+        param.update()
+        image = mi.render(scene, spp=64)
+        mi.util.write_bitmap(CURRENT_TEMP_DIR + "geo_iter{:02d}.png".format(i), image)
+        del objs
 presentationPlot()

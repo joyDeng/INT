@@ -82,7 +82,7 @@ class CSGNode:
         return state_lists, left_order + right_order
 
 class SceneMaterial:
-    def __init__(self, csgnodes, cross_tots, albedos, num_geo):
+    def __init__(self, csgnodes, cross_tots, albedos, num_geo, diff=[True, False]):
         self.csg_node_list = csgnodes
         self.cross_tot_list = cross_tots
         self.alb_list = albedos
@@ -90,6 +90,8 @@ class SceneMaterial:
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
         self.num_geo = num_geo
+        # which geometry are gradient enabled
+        self.diff = diff
         
 
         for node in self.csg_node_list:
@@ -122,16 +124,26 @@ def geo_intersect(scene, ray):
     iter_ray = mi.Ray3f(ray)
     active = True
     trace_active = True
-    
+
+    i = 0
+    # print("\n\n")
+    # print("try to print ray", ray)
     while trace_active:
+        # print("i", i)
+        
         its = scene.ray_intersect(iter_ray)
         shape_id = get_shape_id(scene, its.shape)
-        active = active & (~dr.isinf(its.t))
+        # print("active", active)
+        # print("iteray", iter_ray)
+        active = dr.select(its.is_valid() & active, True, False)
+        # print(active)
         trace_active = dr.any(active)
-
         if trace_active:
             its_list.append([its, active, shape_id])
+            # print("iter_ray", iter_ray)
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
+            
+        i += 1
 
     return its_list
 
@@ -301,16 +313,17 @@ def scene_material_intersect(scene, rays, scm):
     #       cur_material_space: list of index the ray travels from before intersect
     # 
     """     
-
+    # print("getting intersction")
     # get all intersction of ray with the scene geometries  
     its = geo_intersect(scene, rays)
+    # print("got intersction")
     num_rays = dr.width(rays)
     material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
-
+    
     # remove the invalid geometry ray interesction
     num_intersections = len(its)
     assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
-
+    
     return its, material_spaces
 
 
