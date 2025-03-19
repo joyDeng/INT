@@ -24,8 +24,6 @@ def render_result(scenefile, iters):
             }
         })
         ltemp_ply = mi.traverse(objs)
-        # print(ltemp_ply)
-        # exit(0)
    
         param['shield.vertex_positions'] = ltemp_ply["vertex_positions"]
         param['shield.faces'] = ltemp_ply["faces"]
@@ -38,12 +36,34 @@ def render_result(scenefile, iters):
         del objs
 
 # render_result("result.xml", 75)
-sum = 0.0
-length = 0
-for i in range(9):
-    gradients = np.load(f"gradient_fd_{i}.npy")
-    print(gradients)
-    sum += np.sum(gradients)
-    length += gradients.shape[0]
- 
-print("avg", sum / length)
+# sum = 0.0
+import matplotlib.pyplot as plt
+
+def get_data(height_ad, range_ad, ad_):
+    grad_list = []
+    std_list = []
+    x = []
+
+    for h in range(height_ad):
+        ad_gs = np.zeros([0,1], dtype=np.float32)
+        height = h * 0.005
+        length = 0
+        for i in range(range_ad):
+            gradients = np.load(f"gradient_{ad_}_{i}_{height}.npy")
+            ad_gs = np.concatenate([ad_gs, gradients])
+        print(ad_gs.shape)
+        grad = np.mean(ad_gs)
+        std = np.std(ad_gs)
+        print(std)
+        grad_list.append(grad)
+        std_list.append(std)
+        x.append(height)
+        print(f"gradient at {height} is : ",  grad)
+
+    return grad_list, std_list, x
+
+grad_ad, std_ad, x_ad = get_data(4, 2, "ad")
+grad_fd, std_fd, x_fd = get_data(3, 3, "fd")
+plt.errorbar(np.array(x_ad), np.array(grad_ad), yerr=std_ad, fmt='o-')
+plt.errorbar(np.array(x_fd), np.array(grad_fd), yerr=std_fd, fmt='x-')
+plt.show()

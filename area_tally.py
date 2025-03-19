@@ -854,9 +854,6 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         # cur_is_valid &= valid_intersect
 
         numerical_mask |= dr.select(~dr.eq(valid_intersect, intersect[0].is_valid()) & cur_is_valid, True, False)
-        # print("active_mask 118", i, valid_intersect.numpy()[118], intersect[0].is_valid()[118], numerical_mask.numpy()[118])
-        # print("active_mask 750", i, valid_intersect.numpy()[750], intersect[0].is_valid()[750], numerical_mask.numpy()[750])
-        # print("\n")
         # active_ray &= (cur_is_valid & valid_intersect)
         # sample_active &= valid_intersect
         material_idx = UIntD(current_material)
@@ -870,11 +867,10 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         stop_sample_in_current_space = (attenuation * update_attenuation < attenuation_sample) & sample_active
         residual_attenuation = dr.select(stop_sample_in_current_space, attenuation_sample / attenuation, 1.0)
 
-        
 
         update_dist = - dr.log(residual_attenuation) / cur_cross_section_tots
         # update pdf with current attenuation
-        pdf =  dr.select(stop_sample_in_current_space, cur_cross_section_tots * residual_attenuation * attenuation, pdf)
+        pdf =  dr.select(stop_sample_in_current_space, cur_cross_section_tots * attenuation_sample, pdf)
         attenuation_final = dr.select(stop_sample_in_current_space, attenuation * dr.exp(-cur_cross_section_tots * update_dist), attenuation_final)
 
         scatter_pos = dr.select(stop_sample_in_current_space, ray.o + update_dist * ray.d, scatter_pos)
@@ -921,18 +917,19 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
     Etot = dr.zeros(FloatD, dr.width(ray_current))
     radiance = dr.zeros(FloatD, dr.width(ray_current)) + 1.0
     active = True
+
     
     for i in range(MAX_BOUNCE):
-        # print("  rendering .. bounce ", i)
+        print("  rendering .. bounce ", i)
         # get all intersection along current ray
         all_its, material_spaces = scene_material_intersect(scene, ray_current, scm)
-        # print(" found interesction ", i)
+        print(" found interesction ", i)
         attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, start_pos, end_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
                                                                   vertices_list, faces_list, rng)
         
-
+        print("sample")
         terminate_ray = mask_invalid | exit_ray
         # print("  rendering .. ", i)
         if i == 0:
@@ -982,32 +979,37 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
     number = dr.width(ray_current)
     return dr.sum(Etot) / number
 
-def simulate_neutron_in_csg_shape(seed, height, reparam=False):
+def simulate_neutron_in_csg_shape(scene, scm, seed, Va, reparam=False, AD=False):
     rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=seed, initseq=seed*2)
     # set up tally that exit the shape
   
     # generate rays
+    # print("ray generation")
     # ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
     ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
     ray_current = mi.Ray3f(ray_origin, ray_vec)
     
     # load scene
     # temp example, a scene with torus
-    scene, scm = load_scene_node([1.5], [0.9])
+    # print("scene loading")
+    # scene, scm = load_scene_node([1.5], [0.9])
     params = mi.traverse(scene)
     # get scene parameter for optimization
-    Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    # Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
     Fa = dr.unravel(mi.Vector3i, params['A.faces'])
     Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
     Fb = dr.unravel(mi.Vector3i, params['B.faces'])
-    Va.y = Va.y + height
+    # Va.y = Va.y + height
 
+    
     params['A.vertex_positions'] = dr.ravel(Va)
     params['B.vertex_positions'] = dr.ravel(Vb)
-    dr.enable_grad(params['A.vertex_positions'])
-    dr.enable_grad(params['B.vertex_positions'])
+    if AD:
+        dr.enable_grad(params['A.vertex_positions'])
+        dr.enable_grad(params['B.vertex_positions'])
     params.update()
-
+    
+    
     vertices_list = [Va, Vb]
     faces_list = [Fa, Fb]
 
@@ -1028,41 +1030,124 @@ def simulate_neutron_in_csg_shape(seed, height, reparam=False):
 # print(value)
 
 # TODO validate the gradient computation 
-def test_fd(k):
+def test_fd(scene, scm, k, h):
     N = 20
     g = FloatD(0.0)
-    # test gradient computation in ring and torus
     grad_list = []
+
+    params = mi.traverse(scene)
+    # get scene parameter for optimization
+    Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    # Fa = dr.unravel(mi.Vector3i, params['A.faces'])
+    # Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
+    # Fb = dr.unravel(mi.Vector3i, params['B.faces'])
+    # Va.y = Va.y + height
+    
     for i in range(N):
-        v1 = simulate_neutron_in_csg_shape(i + k * N, 0.01 + 0.001, False)
-        # print("Etot(h+delta) id", i, v1)
-        v2 = simulate_neutron_in_csg_shape(i + k * N, 0.01 - 0.001, False)
-        # print("Etot(h-delta)", v2)
+        # print("up")
+        va_param = dr.zeros(mi.Point3f, dr.width(Va)) + Va
+        # print("before", Va.y)
+        va_param.y = va_param.y + h + 0.001
+        # print("after", Va.y)
+        # exit(0)
+        v1 = simulate_neutron_in_csg_shape(scene, scm, i + k * N, va_param, False)
+        
+        va_param = dr.zeros(mi.Point3f, dr.width(Va)) + Va
+        va_param.y = va_param.y + h - 0.001
+
+        v2 = simulate_neutron_in_csg_shape(scene, scm, i + k * N, va_param, False)
         gradient = (v1 - v2) / 0.002
         dr.eval(gradient)
         del v2, v1
         g += gradient / N
         grad_list.append(gradient)
-        del gradient, v1, v2
+
+        del gradient
         gradients_array = np.array(grad_list)
-        np.save( f"gradient_fd_{k}.npy", gradients_array)
-        print("finite difference gradient", g * N / (i+1))
+        np.save( f"gradient_fd_{k}_{h}.npy", gradients_array)
+        print("finite difference gradient: ith ", i, g * N / (i+1))
     print("finite difference gradient avg across", N, g)
 
-    dvdh = FloatD(0.0)
-    for i in range(N):
-        height = FloatD(0.01)
-        dr.enable_grad(height)
-        # v = simulate_neutron_in_csg_shape(i, height, False)
-        # print("False", v)
-        v = simulate_neutron_in_csg_shape(i, height, True)
-        # print("True", v) 
-        # exit(0)
-        dr.backward(v)
-        dvdh += dr.grad(height) / N
-        del v
-        print("auto dif grandients avg across", i, dvdh * N / (i+1))
-    print("auto dif grandients avg across", N, dvdh)
+    # dvdh = FloatD(0.0)
+    # for i in range(N):
+    #     height = FloatD(h)
+    #     dr.enable_grad(height)
+    #     v = simulate_neutron_in_csg_shape(i+k*N, height, True)
+    #     dr.backward(v)
+    #     dvdh_g = dr.grad(height)
+    #     grad_list.append(dvdh_g.numpy())
+    #     dvdh += dr.grad(height) / N
+    #     del v
+    #     gradients_array = np.array(grad_list)
+    #     np.save( f"gradient_ad_{k}_{h}.npy", gradients_array)
+    #     print("auto dif grandients avg across", i, dvdh * N / (i+1))
+    # print("auto dif grandients avg across", N, dvdh)
     
+# dr.set_flag(dr.JitFlag.ReuseIndices, False)
 
-test_fd(2)
+scene, scm = load_scene_node([1.5], [0.9])
+for h in range(2):
+    for i in range(2, 3):
+        test_fd(scene, scm, i, h * 0.005)
+
+
+def test_pdf_1d(seed, number_of_neutrons):
+    r_a, r_b, r_c = 1.0, 1.0, 1.0
+    cs_a, cs_b, cs_c = 0.5, 0.75, 1.0
+    rng = mi.PCG32(size=number_of_neutrons, initstate=seed, initseq=seed*2)
+    # sample distance
+    t = sample_distance(cs_a, rng)
+    stop_in_a = (t < r_a)
+    t_b = ( t * cs_a - r_a * cs_a ) / cs_b
+    stop_in_b = (~stop_in_a) & (t_b < r_b)
+    t_c = (t * cs_a - r_a * cs_a - r_b * cs_b) / cs_c
+    stop_in_c = (~stop_in_a) & (~stop_in_b) & (t_c < r_c)
+
+    t_real = dr.select(stop_in_a, t, dr.select(stop_in_b, r_a + t_b, dr.select(stop_in_c, r_a + r_b + t_c, r_a + r_b + t_c)))
+    distances = t_real.numpy()
+    t_real = distances[distances > 0.0]
+
+    x = dr.linspace(Float, 0, 3.5, 1000)
+    y = dr.exp(-x * cs_a)
+    value = dr.select(x < r_a, cs_a * y, dr.select(x < (r_b + r_a), cs_b * dr.exp( - ((x-r_a) * cs_b + cs_a * r_a)) , dr.select(x < (r_b + r_a + r_c), cs_c * dr.exp(-((x-r_b-r_a) * cs_c + cs_a * r_a + cs_b * r_b)), dr.exp(- cs_a * r_a - cs_b * r_b - cs_c * r_c))))
+    # value = dr.select(x < r_a, cs_a * dr.exp(-x * cs_a), dr.select(x < (r_b + r_a), cs_b *  dr.exp(-x * cs_b), dr.select(x < (r_b + r_a + r_c), cs_c * dr.exp(-x * cs_b), 0.0)))
+
+    colors = plt.cm.Dark2(np.linspace(0.0, 1.0, 8))
+    plt.hist(t_real, bins=2000, density=True, color = colors[0], alpha=0.5, label="sample histogram")
+    plt.plot(x, value, color = colors[1], label="pdf")
+    plt.ylim(0.0, 0.6)
+    plt.xlim(0.0, 3.0)
+    plt.legend()
+    plt.show()
+    # draw a histogram here
+    
+def test_gradient_multi_1d(seed, number_of_neutrons):
+    r_a, r_b, r_c = FloatD(1.0), FloatD(1.0), FloatD(1.0)
+    dr.enable_grad(r_a), dr.enable_grad(r_b), dr.enable_grad(r_c)
+    cs_a, cs_b, cs_c = 0.5, 0.75, 1.0
+    rng = mi.PCG32(size=number_of_neutrons, initstate=seed, initseq=seed*2)
+    t = sample_distance(cs_a, rng)
+
+    attenuation = dr.exp(-t * cs_a)
+
+    stop_in_a = (t < r_a)
+    t_b = ( t * cs_a - r_a * cs_a ) / cs_b
+    stop_in_b = (~stop_in_a) & (t_b < r_b)
+    t_c = (t * cs_a - r_a * cs_a - r_b * cs_b) / cs_c
+    stop_in_c = (~stop_in_a) & (~stop_in_b) & (t_c < r_c)
+
+    value = dr.select( (~stop_in_a) & (~stop_in_b) & (~stop_in_c),  dr.exp(-cs_a * r_a - cs_b * r_b - cs_c * r_c) / dr.detach(dr.exp(-cs_a * r_a - cs_b * r_b - cs_c * r_c)) , 0.0)
+    sum = dr.sum(value) / number_of_neutrons
+    dr.backward(sum)
+    dEdra = dr.grad(r_a)
+    dEdrb = dr.grad(r_b)
+    dEdrc = dr.grad(r_c)
+    print("                       dEda,                     dEdb,                       dEdc")
+    print("Auto diff, monte carlo", dEdra, dEdrb, dEdrc)
+    AdEdra = -cs_a * dr.exp(-cs_a * r_a - cs_b * r_b - cs_c * r_c)
+    AdEdrb = -cs_b * dr.exp(-cs_a * r_a - cs_b * r_b - cs_c * r_c)
+    AdEdrc = -cs_c * dr.exp(-cs_a * r_a - cs_b * r_b - cs_c * r_c)
+    print("Analytic              ", AdEdra, AdEdrb, AdEdrc)
+    
+    
+# test_gradient_multi_1d(0, 200000)

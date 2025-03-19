@@ -201,4 +201,5 @@ def render_geo(scenefile, iters):
         image = mi.render(scene, spp=64)
         mi.util.write_bitmap(CURRENT_TEMP_DIR + "geo_iter{:02d}.png".format(i), image)
         del objs
+        
 presentationPlot()

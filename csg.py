@@ -124,25 +124,15 @@ def geo_intersect(scene, ray):
     iter_ray = mi.Ray3f(ray)
     active = True
     trace_active = True
-
     i = 0
-    # print("\n\n")
-    # print("try to print ray", ray)
     while trace_active:
-        # print("i", i)
-        
         its = scene.ray_intersect(iter_ray)
         shape_id = get_shape_id(scene, its.shape)
-        # print("active", active)
-        # print("iteray", iter_ray)
         active = dr.select(its.is_valid() & active, True, False)
-        # print(active)
         trace_active = dr.any(active)
         if trace_active:
             its_list.append([its, active, shape_id])
-            # print("iter_ray", iter_ray)
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
-            
         i += 1
 
     return its_list
@@ -222,20 +212,26 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
 
     init_state = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
     for intersect in its:
+        # print("intersect", idx)
         it = intersect[0]
         # ignore the tagent intersection
-        active_mask = intersect[1] & (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0)
+        # print("here", (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0))
+        no_parallel = (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0)
+        active_mask = (intersect[1] & no_parallel)
+        # print("active_mask", active_mask)
         shape_id = intersect[2]
-
+        # print("shape_id", shape_id)
         pidx = shape_id.numpy()
+        # print("pidx", pidx)
         active_pidx = pidx[np.where(active_mask.numpy() == True)]
         active_idx = np.where(active_mask.numpy() == True)
+        # print("active_pidx", active_pidx)
         trace_space = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
         trace_space[active_idx, active_pidx] = 1
         init_state[active_idx, active_pidx] += 1
-
+        # print("trace_space")
         geo_state_list.append(trace_space)
-
+        idx += 1
     # summarize init state, where 1 stands for insides, and 0 stands for outsides
     # init_state = init_state % 2
     init_material_id = material_node_ids(scm, init_state, ray_num)
@@ -313,17 +309,17 @@ def scene_material_intersect(scene, rays, scm):
     #       cur_material_space: list of index the ray travels from before intersect
     # 
     """     
-    # print("getting intersction")
+    print("getting intersction")
     # get all intersction of ray with the scene geometries  
     its = geo_intersect(scene, rays)
-    # print("got intersction")
+    print("got intersction")
     num_rays = dr.width(rays)
     material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
-    
+    print("get material space")
     # remove the invalid geometry ray interesction
     num_intersections = len(its)
     assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
-    
+    print("number of iterations", num_intersections)
     return its, material_spaces
 
 
