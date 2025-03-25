@@ -1,5 +1,5 @@
 from area_tally import *
-
+import torch
 from gpytoolbox import remesh_botsch
 
 from constant import DATA_DIR, TEMP_DIR
@@ -36,65 +36,30 @@ def get_vertices_face_list(params):
     return vertices_list, faces_list
     
 
+# @dr.wrap(source='torch', target='drjit')
 def opt(iteration_count, key, remesh):
-    
+    # print("optimization")
     scene, scm = load_scene_node([1.5], [0.9])
     params = mi.traverse(scene)
-    # help(params)
-    # print("items", params.items())
-    # print("params", params.keys())
     
-    # exit(0)
+    # initialize the offset to 0.1
+    params["offset.data"] += 0.1
+    dr.enable_grad(params["offset.data"])
 
-    
-    lambda_ = 15
-    ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
-    
-    
-    # set up tally that exit the shape
-  
-    
-    # generate rays
-    # ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
-    
-    
-    # load scene
-    # temp example, a scene with torus
-    scene, scm = load_scene_node([1.5], [0.9])
-    params = mi.traverse(scene)
-    # get scene parameter for optimization
-    # Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
-    # Fa = dr.unravel(mi.Vector3i, params['A.faces'])
-    # Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
-    # Fb = dr.unravel(mi.Vector3i, params['B.faces'])
-    # Va.y = Va.y + height
+    opt = mi.ad.Adam(lr=0.001)
+    opt["offset.data"] = params["offset.data"]
+    params.update(opt)
 
-    # params['A.vertex_positions'] = dr.ravel(Va)
-    # params['B.vertex_positions'] = dr.ravel(Vb)
-    # dr.enable_grad(params['A.vertex_positions'])
-    # dr.enable_grad(params['B.vertex_positions'])
-    # params.update()
+    # offset A along the normal using a texture map
+    aV = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    aN = dr.unravel(mi.Vector3f, params['A.vertex_normals'])
+    aUV = dr.unravel(mi.Vector2f, params['A.vertex_texcoords'])
+    dr.enable_grad(params[f'A.vertex_positions'])
 
-    # vertices_list = [Va, Vb]
-    # faces_list = [Fa, Fb]
-
-
-
-    opt = mi.ad.Adam(lr=0.005)
-    opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
-    
-    # F = dr.unravel(mi.Vector3i, params[f'{key}.faces'])
-    # V = dr.unravel(mi.Point3f, params[f'{key}.vertex_positions'])
-
-    # init_volume = dr.detach(compute_volume(V, F))
-
-    # negative_delta_volme = init_volume_abs - init_volume
-    # print(init_volume.numpy())
-    # exit(0)
-    dr.enable_grad(params[f'{key}.vertex_positions'])
     v_np, f_np, target_length = get_vf(params, key)
     
-    params.update(opt)
+    
+
     errors = []
     volumes = []
     for it in range(iteration_count):
@@ -104,68 +69,73 @@ def opt(iteration_count, key, remesh):
             shapes = scene.shapes()
             shapes[0].write_ply(TEMP_DIR + f"{key}_iter{it}_csg.ply")
 
-        if (it % remesh == 1) and (it > 1) and remesh > 0:
-            print("try to reparamerize")
-            v_np, f_np, avglength = get_vf(params, key)
+        # if (it % remesh == 1) and (it > 1) and remesh > 0:
+        #     print("try to reparamerize")
+        #     v_np, f_np, avglength = get_vf(params, key)
 
-            if (it // remesh) in [3, 5]:
-                updatelength =  avglength * 0.5
-            else:
-                updatelength = avglength
+        #     if (it // remesh) in [3, 5]:
+        #         updatelength =  avglength * 0.5
+        #     else:
+        #         updatelength = avglength
 
-            v_new, f_new = remesh_botsch(v_np, f_np, i=5, h=updatelength, project=True)
+        #     v_new, f_new = remesh_botsch(v_np, f_np, i=5, h=updatelength, project=True)
 
-            params[f'{key}.vertex_positions'] =  mi.Float(v_new.flatten().astype(np.float32))
-            params[f'{key}.faces'] = mi.Int(f_new.flatten())
-            params.update()
+        #     params[f'{key}.vertex_positions'] =  mi.Float(v_new.flatten().astype(np.float32))
+        #     params[f'{key}.faces'] = mi.Int(f_new.flatten())
+        #     params.update()
             
             # print(help(opt))
-            del opt
-            ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+            # del opt
+            # ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
             
-            # exit(0)
-            # print(target_length * 0.5)
-            # exit(0)
-            opt = mi.ad.Adam(lr=updatelength * 0.07)
-            dr.enable_grad(params[f'{key}.vertex_positions'])
-            params.update()
-            opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
-            params.update(opt)
+            # # exit(0)
+            # # print(target_length * 0.5)
+            # # exit(0)
+            # opt = mi.ad.Adam(lr=updatelength * 0.07)
+            # dr.enable_grad(params[f'{key}.vertex_positions'])
+            # params.update()
+            # opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
+            # params.update(opt)
 
-        params[f'{key}.vertex_positions'] = ls.from_differential(opt['u'])
+        # compute the vertex of mesh A from the distplacement texture
+        tensorxf = TensorXfD(opt["offset.data"])
+        heights_map = mi.Texture2f(tensorxf)
+        mi.util.write_bitmap(TEMP_DIR + f"opt_height_{it}.exr",  mi.Bitmap(heights_map.tensor()))
+        offsets = heights_map.eval_cubic(aUV)[0]
+        offsetedV = aV + aN * offsets
+        params['A.vertex_positions'] = dr.ravel(offsetedV)
         params.update()
-        
-        # exit(0)
 
         vertices_list, faces_list = get_vertices_face_list(params)
-        # V = dr.unravel(mi.Point3f, params[f'{key}.vertex_positions'])
-        # F = dr.unravel(mi.Vector3i, params[f'{key}.faces'])
 
-        # vtemp = compute_volume(V, F)
-        # range_loss = compute_range_loss(V, F)
-        # volume_mse = mse(vtemp, init_volume)
-        # negative_volume_mse = mse(dvx, negative_delta_volme)
-        # print("render nuetron in csg shape")
-
-        ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
+        ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
+        # ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
         ray_current = mi.Ray3f(ray_origin, ray_vec)
 
+        
         energy = render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_current, True)
-        # calculate_tally_energy_light_connection(scene, V, F, TOT_CROSS_SECTION_T, TOT_CROSS_SECTION_A, it, True)
-
         loss = energy 
-        # + range_loss * 2.0 + volume_mse * 5.0 
         dr.backward(loss)
+        
+        # print("\n\nvalue before step", opt["offset.data"].numpy())
+        # print("\n\ngradient", dr.grad(opt["offset.data"]).numpy())
         opt.step()
+        # print("\n\nvalue after step", opt["offset.data"].numpy())
+        # exit(0)
+
+
+
+        # heights_map = mi.Bitmap(heights_map.tensor())
+        # print(height_bitmap)
+        
 
         print(f"Iteration {it:02d}: energy = {energy.numpy()[0]:6f}")  #end='\r'
-        # errors.append(energy.numpy())
-        # volumes.append(vtemp.numpy())
+        
         del energy, loss
-        # volume_mse, range_loss, vtemp
+        torch.cuda.empty_cache()
 
     np.save(TEMP_DIR+"enery_csg.npy", np.array(errors))
-    # np.save(TEMP_DIR+"volumes.npy", np.array(volumes))
     print('\nOptimization complete.')
 
-opt(100, "A", 10)
+
+opt(70, "A", 10)

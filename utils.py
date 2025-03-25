@@ -63,7 +63,12 @@ def get_data(height_ad, range_ad, ad_):
     return grad_list, std_list, x
 
 grad_ad, std_ad, x_ad = get_data(4, 2, "ad")
-grad_fd, std_fd, x_fd = get_data(3, 3, "fd")
-plt.errorbar(np.array(x_ad), np.array(grad_ad), yerr=std_ad, fmt='o-')
-plt.errorbar(np.array(x_fd), np.array(grad_fd), yerr=std_fd, fmt='x-')
+grad_fd, std_fd, x_fd = get_data(4, 4, "fd")
+grad_f1d, std_f1d, x_f1d = get_data(4, 3, "fd")
+grad_f2d, std_f2d, x_f2d = get_data(4, 2, "fd")
+plt.errorbar(np.array(x_ad), np.array(grad_ad), yerr=std_ad, fmt='o-', label="ad")
+plt.errorbar(np.array(x_f2d), np.array(grad_f2d), yerr=std_f2d, fmt='+-', label="fd 20000 sample")
+plt.errorbar(np.array(x_fd), np.array(grad_fd), yerr=std_fd, fmt='x-', label="fd 30000 sample")
+plt.errorbar(np.array(x_f1d), np.array(grad_f1d), yerr=std_f1d, fmt='+-', label="fd 40000 sample")
+plt.legend()
 plt.show()

@@ -124,8 +124,8 @@ def geo_intersect(scene, ray):
     iter_ray = mi.Ray3f(ray)
     active = True
     trace_active = True
-    i = 0
-    while trace_active:
+
+    while trace_active: # check whether there is a infinite while loop
         its = scene.ray_intersect(iter_ray)
         shape_id = get_shape_id(scene, its.shape)
         active = dr.select(its.is_valid() & active, True, False)
@@ -133,7 +133,6 @@ def geo_intersect(scene, ray):
         if trace_active:
             its_list.append([its, active, shape_id])
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
-        i += 1
 
     return its_list
 
@@ -216,7 +215,7 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
         it = intersect[0]
         # ignore the tagent intersection
         # print("here", (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0))
-        no_parallel = (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0)
+        no_parallel = ~dr.eq(dr.abs(dr.dot(ray_dir, it.sh_frame.n)), 0.0)
         active_mask = (intersect[1] & no_parallel)
         # print("active_mask", active_mask)
         shape_id = intersect[2]
@@ -309,17 +308,17 @@ def scene_material_intersect(scene, rays, scm):
     #       cur_material_space: list of index the ray travels from before intersect
     # 
     """     
-    print("getting intersction")
+    # print("getting intersction")
     # get all intersction of ray with the scene geometries  
     its = geo_intersect(scene, rays)
-    print("got intersction")
+    # print("got intersction")
     num_rays = dr.width(rays)
     material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
-    print("get material space")
+    # print("get material space")
     # remove the invalid geometry ray interesction
     num_intersections = len(its)
     assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
-    print("number of iterations", num_intersections)
+    # print("number of iterations", num_intersections)
     return its, material_spaces
 
 

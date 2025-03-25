@@ -3,6 +3,7 @@
 import sys
 sys.path = ["."] + sys.path[2:]
 import matplotlib.pyplot as plt
+# import cv2
 # print(sys.path)
 # exit(0)
 
@@ -11,7 +12,7 @@ import mitsuba as mi
 import drjit as dr
 from drjit.cuda import Float, UInt32, UInt64
 from drjit.cuda.ad import Float as FloatD
-from drjit.cuda.ad import UInt32 as UIntD
+from drjit.cuda.ad import UInt32 as UIntD, TensorXf as TensorXfD
 import numpy as np
 import random
 
@@ -22,7 +23,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 10000
-MAX_BOUNCE = 2
+MAX_BOUNCE = 1
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -42,6 +43,12 @@ def torus(precision, c, a):
     return x, y, z
 
 def load_scene_node(cross_tots, cross_as):
+    
+    v  = np.zeros((64, 64, 1), dtype=np.float32)
+    image = mi.Bitmap(v)
+    mi.util.write_bitmap("offset.exr", image)
+
+    
     scene_dict = {
         'type': 'scene',
             # 'integrator': {
@@ -54,11 +61,18 @@ def load_scene_node(cross_tots, cross_as):
         #     'type': 'envmap',
         #     'filename': "../scenes/textures/envmap2.exr",
         # },
+        # 'bsdf':{
+        #     'type':"diffuse",
+            'offset': {
+                'type':'bitmap',
+                'filename':"offset.exr",
+            },
+        # },
         'A': {
             'id': 'A',
             'type': 'obj',
             'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
-            'filename': "E:/Research/NeutronInv/INT/scene/torusA.obj",
+            'filename': "E:/Research/NeutronInv/INT/scene/torusC.obj",
             'bsdf': {'type': 'diffuse'}
         },
         'B': {
@@ -920,29 +934,29 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
 
     
     for i in range(MAX_BOUNCE):
-        print("  rendering .. bounce ", i)
+        
         # get all intersection along current ray
         all_its, material_spaces = scene_material_intersect(scene, ray_current, scm)
-        print(" found interesction ", i)
+        
         attenuation, distance_tot, attenuation_sample, pdf, scatter_pos, start_pos, end_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
                                                                   vertices_list, faces_list, rng)
         
-        print("sample")
+        
         terminate_ray = mask_invalid | exit_ray
-        # print("  rendering .. ", i)
+        
         if i == 0:
         # accumulate to the tally
             # print(np.where(dr.isinf(attenuation * radiance & active).numpy() == 1))
             # print(attenuation.numpy()[9143], radiance.numpy()[9143])
-            # Etot += (attenuation * radiance & active)
+            Etot += (attenuation * radiance & active)
             # visualize_intersect(scatter_pos & ~exit_ray & ~mask_invalid, "red")
             # print(exit_ray.numpy()[118])
             # print(np.where(((scatter_pos.z > 0.5) & mask_invalid & ~exit_ray).numpy() == True))
             # exit(0)
             # print(np.where(dr.eq(scatter_pos.x, 5.0) & active & ~terminate_ray).numpy() > 0.0)
-            pass
+            # pass
         else:
             wo_theta = (end_pos - ray_current.o) / dr.norm(end_pos - ray_current.o)
             # visualize_intersect([ray_current.o & active, end_pos & active], ["red", "blue"])
@@ -1030,7 +1044,7 @@ def simulate_neutron_in_csg_shape(scene, scm, seed, Va, reparam=False, AD=False)
 # print(value)
 
 # TODO validate the gradient computation 
-def test_fd(scene, scm, k, h):
+def test_fd(scene, scm, k, height):
     N = 20
     g = FloatD(0.0)
     grad_list = []
@@ -1038,34 +1052,29 @@ def test_fd(scene, scm, k, h):
     params = mi.traverse(scene)
     # get scene parameter for optimization
     Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
-    # Fa = dr.unravel(mi.Vector3i, params['A.faces'])
-    # Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
-    # Fb = dr.unravel(mi.Vector3i, params['B.faces'])
-    # Va.y = Va.y + height
     
     for i in range(N):
-        # print("up")
         va_param = dr.zeros(mi.Point3f, dr.width(Va)) + Va
-        # print("before", Va.y)
-        va_param.y = va_param.y + h + 0.001
-        # print("after", Va.y)
-        # exit(0)
+        va_param.y = va_param.y + height + 0.001
         v1 = simulate_neutron_in_csg_shape(scene, scm, i + k * N, va_param, False)
         
         va_param = dr.zeros(mi.Point3f, dr.width(Va)) + Va
-        va_param.y = va_param.y + h - 0.001
-
+        va_param.y = va_param.y + height - 0.001
         v2 = simulate_neutron_in_csg_shape(scene, scm, i + k * N, va_param, False)
+
+        # print(Va)
         gradient = (v1 - v2) / 0.002
         dr.eval(gradient)
         del v2, v1
+
         g += gradient / N
         grad_list.append(gradient)
-
         del gradient
+
         gradients_array = np.array(grad_list)
         np.save( f"gradient_fd_{k}_{h}.npy", gradients_array)
         print("finite difference gradient: ith ", i, g * N / (i+1))
+
     print("finite difference gradient avg across", N, g)
 
     # dvdh = FloatD(0.0)
@@ -1085,10 +1094,13 @@ def test_fd(scene, scm, k, h):
     
 # dr.set_flag(dr.JitFlag.ReuseIndices, False)
 
-scene, scm = load_scene_node([1.5], [0.9])
-for h in range(2):
-    for i in range(2, 3):
-        test_fd(scene, scm, i, h * 0.005)
+# scene, scm = load_scene_node([1.5], [0.9])
+# exit(0)
+# mi.set_log_level(mi.LogLevel.Debug)
+# for h in range(2, 4):
+#     for i in range(2, 4):
+#         print(f"h {h}, i {i}")
+#         test_fd(scene, scm, i, h * 0.005)
 
 
 def test_pdf_1d(seed, number_of_neutrons):
