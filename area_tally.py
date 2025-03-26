@@ -44,7 +44,7 @@ def torus(precision, c, a):
 
 def load_scene_node(cross_tots, cross_as):
     
-    v  = np.zeros((64, 64, 1), dtype=np.float32)
+    v  = np.zeros((64, 64, 1), dtype=np.float32) + 0.1
     image = mi.Bitmap(v)
     mi.util.write_bitmap("offset.exr", image)
 
@@ -110,6 +110,26 @@ def sample_direction_hg(rng, wi, g):
     sinTheta = dr.sqrt(sinThetaSqr)
     wo = mi.Frame3f(wi).to_world(mi.Vector3f(sinTheta * dr.cos(phi), sinTheta * dr.sin(phi), cosTheta))
     return wo
+
+def sample_dir_origin_from_ring(rng, radius):
+    sample1 = rng.next_float32()
+    number_neutrons = dr.width(sample1)
+    angle = 2.0 * dr.pi * sample1
+
+    o = dr.zeros(mi.Vector3f, number_neutrons)
+    o.x = radius * dr.sin(angle)
+    o.z = radius * dr.cos(angle)
+
+    sample2 = rng.next_float32()
+    sin_theta = dr.sqrt(1.0 - dr.power(sample2, 2.0))
+
+    v = dr.zeros(mi.Vector3f, number_neutrons)
+    v.x = sin_theta * dr.sin(angle)
+    v.z = sin_theta * dr.cos(angle)
+    v.y = sample2
+
+    v = v / dr.norm(v)
+    return v, o
 
 def sample_dir_from_unit_ring(rng, radius, cos_theta=0.0):
     #sample position on the ring
@@ -306,16 +326,6 @@ def recomputeIntersection(scene, its, v, f, ray, active, debug=False, id=0):
     intersect &= (t >= 0.0)
 
     p = e1 * u + e2 * v
-
-    # if debug:
-    #     print("p0, p1, p2", p0.numpy()[id], p1.numpy()[id], p2.numpy()[id])
-    #     print("e1, e2:", e1.numpy()[id], e2.numpy()[id])
-    #     print("pvec, tvec:", pvec.numpy()[id], tvec.numpy()[id])
-    #     print("intersection point", p.numpy()[id])
-    #     print("inv_det", inv_det.numpy()[id])
-    #     print("distance", t.numpy()[id])
-    #     print("its.p", its.p.numpy()[7505])
-    #     print(dr.isinf(inv_det).numpy()[7505])
 
     # the p is not comptued correctly here
     return t, mi.Vector2f(u, v), p, intersect
@@ -1001,6 +1011,7 @@ def simulate_neutron_in_csg_shape(scene, scm, seed, Va, reparam=False, AD=False)
     # print("ray generation")
     # ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
     ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
+    
     ray_current = mi.Ray3f(ray_origin, ray_vec)
     
     # load scene

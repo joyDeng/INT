@@ -19,8 +19,8 @@
 
 
 
-    <bsdf type="diffuse" id="medium">
-        <rgb name="reflectance" value="0.6, 0.8, 0.7"/>
+    <bsdf type="roughdielectric" id="medium">
+        <rgb name="alpha" value="0.3"/>
     </bsdf>
 
     <bsdf type="diffuse" id="source">
@@ -35,6 +35,12 @@
         <string name="filename" value="E:\Research\NeutronInv\INT\scene\init.obj"/>
         <ref id="medium"/>
     </shape>
+
+    <shape type="obj" id="iner">
+        <string name="filename" value="E:\Research\NeutronInv\INT\scene\torusC.obj"/>
+        <ref id="source"/>
+    </shape>
+
 
     <!-- <shape type="sphere" id="light">
         <transform name="to_world">
