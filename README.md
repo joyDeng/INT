@@ -10,7 +10,7 @@ Example of creating a csg material can be find in csg.py test_1()
 
 Neutron transport simulation is implemented in area_tally.py.
 
-Shape optimizer is written in optimization.py
+Shape optimizer without csg is written in optimization.py
+Shape optimizer with csg is written in opt_csg.py
 
 Driver: 560.81
-unresolved issue with dirver: 566, 572.16
