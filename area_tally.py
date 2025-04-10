@@ -896,11 +896,24 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng):
 
 def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng):
     """
-    Return: the attenuation of the energy along the ray, and tot distance in the medium along the ray
+    Return: 
+        the attenuation of the energy along the ray
+        reparam_factor: reparameterization factor for the scattering event alone the ray
+        attenuation_till_scatter_point:
+        pdf: probability of sampling the attenuation
+        scatter_pos:  point for scattering event
+        features: material propertes at the scattering point
+        exit_ray: ray go through the medium
+        numerical_mask: mask out the invalid intersection due to the numerical issue
     Parameters:
+        scene: mitsuba scene
         all_its: all intersection list, each element is structured as [mi.surfaceintersect, active, shape_id]
         material_spaces: list of material along the ray
+        ray_pass: the queried ray
         scm: material properties along the ray
+        vertices_list: list of vertices in scene
+        face_list: list of faces in scene
+        rng: random number generator
     """
     ray = mi.Ray3f(ray_pass)
     num_rays = dr.width(ray)
@@ -917,24 +930,23 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     numerical_mask = False
 
     attenuation_till_scatter_point = dr.ones(FloatD, num_rays)
-    current_distance = dr.zeros(FloatD, num_rays)
-    # print("\n\n\nevaluate attenuation", print(len(all_its)))
+    # current_distance = dr.zeros(FloatD, num_rays)
+    
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
+
+        # recompute the intersection with the gradient attached
         cur_is_valid = intersect[1]
         distance, p, valid_intersect = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
         # distance = next_distance - current_distance
         # current_distance = next_distance
-        # print("distance is :", distance)
         
         numerical_mask |= dr.select(~(valid_intersect == intersect[0].is_valid()) & cur_is_valid & sample_active, True, False)
-        # active_ray &= (cur_is_valid & valid_intersect)
-        # sample_active &= valid_intersect
         material_idx = UIntD(current_material)
 
         # no attenuation in vaccum
         in_medium = ~ (material_idx == scm.num_material)
         material_idx = dr.select(in_medium, material_idx, 0)
-        # print("in medium", in_medium)
+
 
         # get cross_section_value of materials
         cur_cross_section_tots = dr.gather(FloatD, cross_section_tots, material_idx)
@@ -951,9 +963,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         
 
         # compute the point that scatters in the medium
-        # scatter_pos = dr.select(stop_sample_in_current_space, ray.o + dr.detach(update_dist) * ray.d, scatter_pos)
         scatter_pos = dr.select(stop_sample_in_current_space, ray.o + dr.detach(update_dist) * ray.d, scatter_pos)
-        # scatter_pos = dr.select(stop_sample_in_current_space, ray.o + update_dist * ray.d, scatter_pos)
         dist_reparamed = dr.detach(update_dist / distance)
         attenuation_till_scatter_point = dr.select(stop_sample_in_current_space, attenuation * dr.exp(-cur_cross_section_tots * dist_reparamed * distance), attenuation_till_scatter_point)
         nerest_hit_from_scatter_pos = dr.select(stop_sample_in_current_space, ray.o, nerest_hit_from_scatter_pos)
@@ -961,25 +971,13 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         sample_active &= ~(stop_sample_in_current_space)
         
         attenuation *= update_attenuation
-        # distance_tot += dr.select(in_medium, distance, 0.0)
         reparam_factor = dr.select(stop_sample_in_current_space, distance, reparam_factor)
-        # print(distance_tot, distance, stop_sample_in_current_space)
 
         # update the ray origin
         ray.o += distance * ray.d
-        # end_pos = dr.select(~sample_active, ray.o, end_pos)
-        # idx = np.where(sample_active.numpy() > 0)
-        # print(i, (dr.norm(scatter_pos - ray.o)).numpy()[idx])
-        # print("divide by zero", np.where(dr.isnan(1.0 / dr.norm(scatter_pos - ray.o)).numpy() == True))
         
         end_pos = dr.select(cur_is_valid & valid_intersect, ray.o, end_pos)
         
-        # i += 1
-        # print(dr.norm(end_pos - ray_pass.o).numpy()[2531], distance.numpy()[2531], cur_is_valid.numpy()[2531], intersect[0].t.numpy()[2531])
-    # exit(0)
-    # terminate ray if the sample point go beyond the range. exclude the ray travel through vaccuum
-    # print(sample_active.numpy()[118])
-    # print("pdf attenuation", pdf)
     exit_ray = sample_active
     return attenuation, reparam_factor, attenuation_till_scatter_point, pdf, scatter_pos, features, exit_ray, numerical_mask
 
@@ -1003,38 +1001,24 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
 
     bounceIdx = 0
     while bounceIdx < MAX_BOUNCE:
-        
-        # get all intersection along current ray
-       # print(i, active)
-        # print("before scattering", bounceIdx)
+        # get a list of intersection alone the ray
         all_its, material_spaces = dr.detach(scene_material_intersect(scene, ray_current, scm, active))
-        #print(i, active)
         dr.eval()
-        # print("number of itersection", bounceIdx)
         attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
                                                                   vertices_list, faces_list, rng)
-        # print("attenuation computed", bounceIdx)
-        # release_intersect(all_its)
-        dr.detach(all_its)
+        # dr.detach(all_its)
         terminate_ray = mask_invalid | exit_ray
-        
-        #print(i, "mask invalid", mask_invalid)
-        #print(i, "active", exit_ray)
 
         if bounceIdx == 0:
             Etot += (attenuation * radiance & active)
-            # pass
             dr.eval(Etot)
         else:
-            # wo_theta = (end_pos - ray_current.o) / dr.norm(end_pos - ray_current.o)
-            # fp = 1.0
             fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
             Etot += (attenuation * radiance * fp / dr.detach(fp) & active)
             dr.eval(Etot)
 
-        # reparameterize at the scattering position
         if reparam:
             cross_section_reparam_t = feature.ext * reparam_factor
             pdf = pdf * reparam_factor
@@ -1046,12 +1030,9 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
         
    
         # phase function, sample a direction
+        # better sample from the source instead of sample from the phase function
         wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
-        # wo = dr.zeros(mi.Vector3f, dr.width(ray_current.d))
-        # wo.y = -1.0
         wi_theta = -ray_current.d
-        # (start_pos - scatter_pos) / dr.norm(start_pos - scatter_pos)
-        
         radiance *= (attenuation_till_scatter / dr.detach(pdf)) * (cross_section_reparam_t * feature.alb) 
 
         # update ray
@@ -1238,11 +1219,6 @@ def test_hemisphere(num_neutrons, variable):
 
     theta = variable
     # height = 1.0 - theta
-
-    # finite difference
-    # print(mi.Point3f))
-    # help(dr.unravel)
-    # exit(0)
 
     Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
     Va_ = dr.zeros(mi.Point3f, dr.width(Va)) + Va 

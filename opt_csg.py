@@ -230,6 +230,7 @@ def opt(iteration_count, key, nuetron_number):
     np.save(TEMP_DIR+"enery_csg_ce.npy", np.array(errors))
     np.save(TEMP_DIR+"volume_csg_ce.npy", np.array(volumes))
     print('\nOptimization complete.')
+    
 
 def plot_energy_and_volume(values, sticker):
     # dr.set_log_level(dr.LogLevel.Debug) 

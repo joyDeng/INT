@@ -1,5 +1,6 @@
 
 # this file is used to visualize the mesh
+# you need to install paraview, add path of pvpython.exe to the path and run pvpython paraview.py to render
 import sys
 
 # add paraview python package
