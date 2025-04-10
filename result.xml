@@ -1,17 +1,18 @@
 <scene version="3.0.0" >
     <integrator type="path" />
-    <film type="hdrfilm">
-        <integer name="width" value="1024"/>
-        <integer name="height" value="1024"/>
-    </film>
+   
 
     <!-- Sensor (camera settings) -->
     <sensor type="perspective">
         <float name="fov" value="45"/>
         <transform name="to_world">
             <!-- Rotate camera clockwise by 45 degrees along the y-axis -->
-            <lookat origin="0, 10, 0" target="0, 0, 0" up="0, 0, 1"/>
+            <lookat origin="7, 7, 0" target="0, 0, 0" up="0, 0, 1"/>
         </transform>
+         <film type="hdrfilm">
+            <integer name="width" value="1024"/>
+            <integer name="height" value="1024"/>
+        </film>
         <sampler type="independent">
             <integer name="sample_count" value="64"/>
         </sampler>
@@ -20,11 +21,12 @@
 
 
     <bsdf type="roughdielectric" id="medium">
+        <rgb name="specular_reflectance" value="0.6, 0.9, 0.7"/>
         <rgb name="alpha" value="0.3"/>
     </bsdf>
 
     <bsdf type="diffuse" id="source">
-        <rgb name="reflectance" value="0.9, 0.6, 0.7"/>
+        <rgb name="reflectance" value="0.6, 0.9, 0.7"/>
     </bsdf>
 
     <bsdf type="diffuse" id="detector">
@@ -33,7 +35,7 @@
 
     <shape type="obj" id="shield">
         <string name="filename" value="E:\Research\NeutronInv\INT\scene\init.obj"/>
-        <ref id="medium"/>
+        <ref id="source"/>
     </shape>
 
     <shape type="obj" id="iner">

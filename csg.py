@@ -1,7 +1,7 @@
 
 # used only on my windows machine
-import sys
-sys.path = ["."] + sys.path[2:]
+# import sys
+# sys.path = ["."] + sys.path[2:]
 
 # print(sys.path)
 # exit(0)
@@ -12,6 +12,7 @@ import drjit as dr
 from drjit.cuda import Float, UInt32, UInt64, TensorXf, Array2f, ArrayXf, Bool
 from drjit.cuda.ad import Float as FloatD, UInt32 as UInt32D
 import numpy as np
+import torch
 import random
 # dr.JitFlag.PacketOps=True
 
@@ -114,26 +115,42 @@ def get_shape_id(scene, shape_ptr):
     shape_id = dr.zeros(UInt32, dr.width(shape_ptr))
     i = 0
     for s in scene.shapes():
-        shape_id = dr.select(dr.eq(s, shape_ptr), i, shape_id)
+        # help(dr.e)
+        shape_id = dr.select(s == shape_ptr, i, shape_id)
         i += 1
     return shape_id
 
 
-def geo_intersect(scene, ray):
+def geo_intersect(scene, ray, active_ray):
     its_list = []
     iter_ray = mi.Ray3f(ray)
-    active = True
+    active = True & active_ray
     trace_active = True
 
-    while trace_active: # check whether there is a infinite while loop
+    i = 0
+    continue_trace = True
+    while continue_trace: # check whether there is a infinite while loop
+        # print("iter ", i, "1")
         its = scene.ray_intersect(iter_ray)
+        # print("2")
         shape_id = get_shape_id(scene, its.shape)
+        # print(shape_id)
+        # print(active)
+        # print("itersection position", its.p.numpy()[0])
+        # print("3")
         active = dr.select(its.is_valid() & active, True, False)
-        trace_active = dr.any(active)
-        if trace_active:
+        fact = dr.select(active, 1, 0)
+        trace_active = dr.sum(fact)
+        # print("4")
+        if trace_active > 0:
             its_list.append([its, active, shape_id])
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
-
+        else:
+            continue_trace = False
+        # print("5s")
+        i += 1
+    # print("\n\nhave itersection number of", len(its_list))
+    # exit(0)
     return its_list
 
 def count_active_intersect(it_list):
@@ -160,22 +177,31 @@ def inside_by_node_id(query_state, scm, node_id):
         scm: csg node informations
         node_id: we want to know whether the query state is in node_id
     """
-    ret = np.zeros(query_state.shape[0], dtype=np.int32)
-    val = np.zeros(scm.num_geo, dtype=np.int32)
+    # ret = np.zeros(query_state.shape[0], dtype=np.int32)
+    # val = np.zeros(scm.num_geo, dtype=np.int32)
+    ret = torch.zeros(query_state.shape[0], dtype=torch.int64, device='cuda:0')
+    val = torch.zeros(scm.num_geo, dtype=torch.int64, device='cuda:0')
 
     valid_state_list, shape_ids = scm.get_state_by_id(node_id)
-    shape_used = np.zeros(scm.num_geo, dtype=np.int32)
+    # shape_used = np.zeros(scm.num_geo, dtype=np.int32)
+    shape_used = torch.zeros(scm.num_geo, dtype=torch.int64, device='cuda:0')
     shape_used[shape_ids] = 1
-    shape_mask_out = np.where(shape_used == 0)
+    # shape_mask_out = np.where(shape_used == 0)
+    shape_mask_out = torch.where(shape_used == 0)[0].long()
     # print(query_state)
     # print(shape_mask_out)
     # exit(0)
     query_state[shape_mask_out] = 0
     for state in valid_state_list:
-        valid_state = val + state
+        # print(val)
+        # print(torch.tensor(state, device='cuda:0', dtype=torch.int64))
+        valid_state = val + torch.tensor(state, device='cuda:0', dtype=torch.int64)
         valid_state[shape_mask_out] = 0
         
-        matching_idx = np.where((valid_state == query_state).all(axis=1))[0]
+        # matching_idx = np.where((valid_state == query_state).all(axis=1))[0]
+        matching_idx = torch.where((valid_state == query_state).all(axis=1))[0]
+        # print(matching_idx)
+        # exit(0)
         ret[matching_idx] = 1
     return ret
 
@@ -209,42 +235,79 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     geo_state_list = []
     idx = 0
 
-    init_state = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
+    # init_state = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
+    init_state_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
     for intersect in its:
-        # print("intersect", idx)
+        # print("intersect bounces", idx)
         it = intersect[0]
         # ignore the tagent intersection
+        # print("intersect 2")
         # print("here", (dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0))
-        no_parallel = ~dr.eq(dr.abs(dr.dot(ray_dir, it.sh_frame.n)), 0.0)
-        active_mask = (intersect[1] & no_parallel)
+        # no_parallel = ~dr.eq(dr.abs(dr.dot(ray_dir, it.sh_frame.n)), 0.0)
+        # no_parallel = dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0
+        active_mask = (intersect[1] ) #& no_parallel
         # print("active_mask", active_mask)
         shape_id = intersect[2]
-        # print("shape_id", shape_id)
-        pidx = shape_id.numpy()
-        # print("pidx", pidx)
-        active_pidx = pidx[np.where(active_mask.numpy() == True)]
-        active_idx = np.where(active_mask.numpy() == True)
-        # print("active_pidx", active_pidx)
-        trace_space = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
-        trace_space[active_idx, active_pidx] = 1
-        init_state[active_idx, active_pidx] += 1
+        
+        # print("intersect 3")
+        # pidx = shape_id.numpy()
+        # print(dr.isnan(shape_id))
+        pidx_torch = shape_id.torch().long()
+        # print("intersect 4")
+        # print(pidx_torch)
+        # print("pidx_torch", pidx_torch)
+        # print(np.where(active_mask.numpy() == True))
+        # print(torch.where(active_mask.torch() == True))
+        # active_pidx = pidx[np.where(active_mask.numpy() == True)]
+        value = dr.select(active_mask, 1.0, 0.0)
+        # indices = dr.linspace(0, ray_num)
+        
+        # print(type(value))
+        # print("intersect 5-")
+        # value.numpy()
+        # print(value.index())
+        # exit(0)
+        # np.save("value.npy", value)
+        active_idx_torch = torch.where(value.torch() == 1.0)[0].long()
+        # print("torch_idx", torch_idx)
+        # print("intersect 5")
+        active_pidx_torch = torch.gather(pidx_torch, 0, active_idx_torch)
+        # pidx_torch[torch_idx]
+        # print(active_pidx)
+        # print(active_pidx_torch)
+        # exit(0)
+        # active_idx = np.where(active_mask.numpy() == True)
+     
+        
+        # print("intersect 6")
+        # trace_space = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
+        trace_space_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
+        trace_space_torch[active_idx_torch, active_pidx_torch] = 1
+        init_state_torch[active_idx_torch, active_pidx_torch] += 1
+        # trace_space[active_idx_torch, active_pidx_torch] = 1
+        # init_state[active_idx_torch, active_pidx_torch] += 1
         # print("trace_space")
-        geo_state_list.append(trace_space)
+        # exit(0)
+        geo_state_list.append(trace_space_torch)
         idx += 1
+        # print("intersect 7")
     # summarize init state, where 1 stands for insides, and 0 stands for outsides
     # init_state = init_state % 2
-    init_material_id = material_node_ids(scm, init_state, ray_num)
+    init_material_id = material_node_ids(scm, init_state_torch, ray_num)
 
     
     material_spaces = [init_material_id]
-    cur_state = init_state.copy()
+    cur_state = init_state_torch.clone()
 
     # loop through the geo_state_list and get information about material space along the ray
     for state in geo_state_list:
         cur_state = next_state(cur_state, state)
         cur_material_id = material_node_ids(scm, cur_state, ray_num)
+        # print(cur_material_id)
         material_spaces.append(cur_material_id)
     
+    # exit(0)
+    # print(material_spaces)
     return material_spaces
 
 
@@ -292,7 +355,7 @@ def next_state(init_state, inter_state):
     return init_state
 
 
-def scene_material_intersect(scene, rays, scm):
+def scene_material_intersect(scene, rays, scm, active):
     """ 
       This function returns all intersections of ray with scene materials 
     # with list of inshape and fromshape indices to discribe from which material the ray is
@@ -308,13 +371,14 @@ def scene_material_intersect(scene, rays, scm):
     #       cur_material_space: list of index the ray travels from before intersect
     # 
     """     
-    # print("getting intersction")
+    # print("1")
     # get all intersction of ray with the scene geometries  
-    its = geo_intersect(scene, rays)
-    # print("got intersction")
+    # print("before geo intersect")
+    its = dr.detach(geo_intersect(scene, rays, active))
+    # print("after geo intersect")
     num_rays = dr.width(rays)
     material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
-    # print("get material space")
+    # print("after get material space along ray")
     # remove the invalid geometry ray interesction
     num_intersections = len(its)
     assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
@@ -338,6 +402,7 @@ def csg_intersect(scene, rays, csnode):
     num_valid_intersection = dr.zeros(FloatD, dr.width(rays))
     inout = dr.zeros(UInt32, dr.width(rays))
     shape_id = dr.zeros(UInt32, dr.width(rays))
+
     for it, intersection_state in zip(its, geo_state_list):
         change_state = next_state(change_state, intersection_state)
         next_space = inside(shape_state, change_state)
@@ -490,7 +555,7 @@ def test1():
     o.z = dr.linspace(Float, -1.0, 1.0, num_ray)
     rays = mi.Ray3f(o, v)
 
-    its, material_spaces = scene_material_intersect(scene, rays, media)
+    its, material_spaces = scene_material_intersect(scene, rays, media, True)
     # print("its", its)
     # print("material ids", material_spaces)
     # first_hit = ith_hit_from_current(its, material_spaces, num_ray, 0)

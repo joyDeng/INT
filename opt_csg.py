@@ -1,5 +1,5 @@
 from area_tally import *
-import torch
+# import torch
 from gpytoolbox import remesh_botsch
 
 from constant import DATA_DIR, TEMP_DIR
@@ -20,6 +20,7 @@ def get_vf(params, key):
 def get_vertices_face_list(params):
     # watch out for the order of the keys here
     keys = params.keys()
+    # print(params)
     vertices_list = []
     faces_list = []
     for k in keys:
@@ -29,21 +30,22 @@ def get_vertices_face_list(params):
             # print(name)
             # exit(0)
             V = dr.unravel(mi.Point3f, params[f'{name}.vertex_positions'])
-            F = dr.unravel(mi.Vector3i, params[f'{name}.faces'])
+            F = dr.unravel(mi.Vector3i, mi.Int(params[f'{name}.faces']))
             vertices_list.append(V)
             faces_list.append(F)
     # print(vertices_list, faces_list)
     return vertices_list, faces_list
     
 def compute_range_loss(opt):
-    height = opt["offset.data"]
+    height = opt["BitmapTextureImpl.data"]
     loss = dr.sum(dr.select(height < 0.0, (0.0 - height) * (0.0 - height), 0.0))
     return loss
 
 def compute_volume(v, faces):
-    p0 = dr.gather(mi.Vector3f, v, faces.x, True)
-    p1 = dr.gather(mi.Vector3f, v, faces.y, True)
-    p2 = dr.gather(mi.Vector3f, v, faces.z, True)
+    # dr.gather(mi.Point3f, v, faces.x, active)
+    p0 = dr.gather(mi.Point3f, v, faces.x, True)
+    p1 = dr.gather(mi.Point3f, v, faces.y, True)
+    p2 = dr.gather(mi.Point3f, v, faces.z, True)
 
     delta_1 = p1 - p0
     delta_2 = p2 - p0
@@ -77,9 +79,9 @@ def compute_differentiable_csg_volume(params, csg_node):
 
 
     outer_mesh_v = dr.unravel(mi.Point3f, params['A.vertex_positions'])
-    outer_mesh_f = dr.unravel(mi.Vector3i, params['A.faces'])
+    outer_mesh_f = dr.unravel(mi.Vector3i, mi.Int(params['A.faces']))
     inner_mesh_v = dr.unravel(mi.Point3f, params['B.vertex_positions'])
-    inner_mesh_f =  dr.unravel(mi.Vector3i, params['B.faces'])
+    inner_mesh_f =  dr.unravel(mi.Vector3i, mi.Int(params['B.faces']))
 
     # help(outer_mesh)
     # exit(0)
@@ -99,17 +101,19 @@ def compute_differentiable_csg_volume(params, csg_node):
     return vol_outer - vol_inner
 
 # @dr.wrap(source='torch', target='drjit')
-def opt(iteration_count, key, remesh):
+def opt(iteration_count, key, nuetron_number):
     # print("optimization")
     scene, scm = load_scene_node([1.5], [0.9])
     params = mi.traverse(scene)
+    # print(params)
+    # exit(0)
     
     # initialize the offset to 0.1
-    params["offset.data"] += 0.1
-    dr.enable_grad(params["offset.data"])
+    params["BitmapTextureImpl.data"] += 0.1
+    dr.enable_grad(params["BitmapTextureImpl.data"])
 
     opt = mi.ad.Adam(lr=0.001)
-    opt["offset.data"] = params["offset.data"]
+    opt["BitmapTextureImpl.data"] = params["BitmapTextureImpl.data"]
     params.update(opt)
 
     # offset A along the normal using a texture map
@@ -124,8 +128,10 @@ def opt(iteration_count, key, remesh):
 
     errors = []
     volumes = []
+
     for it in range(iteration_count):
-        rng = mi.PCG32(size=NUMBER_NEUTRONS, initstate=it, initseq=it*2)
+        rng = mi.PCG32(size=nuetron_number, initstate=it+1, initseq=(it+1)*2)
+        dr.make_opaque(rng)
 
         if it % 1 == 0:
             shapes = scene.shapes()
@@ -162,9 +168,11 @@ def opt(iteration_count, key, remesh):
         # compute the vertex of mesh A from the distplacement texture
         range_loss = compute_range_loss(opt)
 
-        tensorxf = TensorXfD(opt["offset.data"])
-        heights_map = mi.Texture2f(tensorxf)
+        tensorxf = TensorXfD(opt["BitmapTextureImpl.data"])
+        heights_map = mi.Texture2f(tensorxf, wrap_mode=dr.WrapMode.Repeat)
         mi.util.write_bitmap(TEMP_DIR + f"opt_height_{it}.exr",  mi.Bitmap(heights_map.tensor()))
+
+
         offsets = heights_map.eval_cubic(aUV)[0]
         EPS = 0.00001
         offsets = dr.select(offsets < 0.0, EPS, offsets)
@@ -176,7 +184,7 @@ def opt(iteration_count, key, remesh):
 
         
         # ray_vec, ray_origin = sample_dir_from_unit_ring(rng, 1.0, cos_theta=0.0)
-        ray_vec, ray_origin = sample_dir_origin_from_ring(rng, 1.0)
+        ray_vec, ray_origin = sample_dir_origin_from_ring_nosym(rng, 1.0)
         # ray_vec, ray_origin = sample_direction_from_linear_source(NUMBER_NEUTRONS)
         ray_current = mi.Ray3f(ray_origin, ray_vec)
 
@@ -184,13 +192,18 @@ def opt(iteration_count, key, remesh):
         energy = render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_current, True)
         if it == 0:
             volume_init = dr.detach(compute_differentiable_csg_volume(params, scm.csg_node_list[0]))
+            energy_init = dr.detach(energy)
         volume = compute_differentiable_csg_volume(params, scm.csg_node_list[0])
+        # volume_loss = dr.power(volume - volume_init, 2.0)
         volume_loss = dr.power(volume - volume_init, 2.0)
+        # energy_loss = dr.power(energy - energy_init, 2.0)
+        energy_loss = energy
+        # dr.select(energy > 0.5, dr.power(energy - 0.5, 2.0),  0.0)
         
-        loss = energy + range_loss
-        # + volume_loss
+        loss = energy_loss + range_loss + volume_loss
         dr.backward(loss)
-        
+        errors.append(energy.numpy())
+        volumes.append(volume.numpy())
         # print("\n\nvalue before step", opt["offset.data"].numpy())
         # print("\n\ngradient", dr.grad(opt["offset.data"]).numpy())
         opt.step()
@@ -203,13 +216,45 @@ def opt(iteration_count, key, remesh):
         # print(height_bitmap)
         
 
-        print(f"Iteration {it:02d}: energy = {energy.numpy()[0]:6f}, volume = {volume_loss.numpy()[0]:6f}")  #end='\r'
+        print(f"Iteration {it:02d}: energy = {energy_loss.numpy()[0]:6f}, volume = {volume_loss.numpy()[0]:6f}")  #end='\r'
         
-        del energy, loss, range_loss, volume_loss
-        torch.cuda.empty_cache()
+        del energy, loss, range_loss, volume_loss, energy_loss
 
-    np.save(TEMP_DIR+"enery_csg.npy", np.array(errors))
+        # dr.kernel_history_clear()
+        # dr.flush_malloc_cache()
+        # dr.malloc_clear_statistics()
+        dr.flush_kernel_cache()
+        # if it % 10 == 0:
+            # dr.flush_malloc_cache()
+
+    np.save(TEMP_DIR+"enery_csg_ce.npy", np.array(errors))
+    np.save(TEMP_DIR+"volume_csg_ce.npy", np.array(volumes))
     print('\nOptimization complete.')
 
+def plot_energy_and_volume(values, sticker):
+    # dr.set_log_level(dr.LogLevel.Debug) 
+    # mi.LogLevel = "Debug"
+    mi.DEBUG = True
+    length = values.shape[0]
+    # plt.plot(values)
+    # plt.show()
+    # exit(0)
+    # print(length)
+    # exit(0)
+    for i in range(length):
+        print(i)
+        es = values[:i]
+        # /vs = volumes[:i]
 
-opt(200, "A", 10)
+        plt.plot(es, label=sticker)
+        plt.xlim(0,200)
+        plt.ylim(0.640,0.648)
+        plt.legend()
+        plt.savefig(TEMP_DIR + f"{sticker}_{i}.png")
+        plt.close()
+
+
+
+opt(200, "A", 10000)
+#values = np.load(TEMP_DIR + "enery_csg_2c.npy")
+#plot_energy_and_volume(values, "energy_with_volume_constraints")
