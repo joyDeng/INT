@@ -1,6 +1,6 @@
 import numpy as np
-import sys
-sys.path = ["."] + sys.path[2:]
+# import sys
+# sys.path = ["."] + sys.path[2:]
 
 import mitsuba as mi
 # import mitsuba as mi
@@ -107,7 +107,7 @@ def plot_test_hemisphere():
     fd = np.load("hemisphere_test_fd.npy")
     ad = np.load("hemisphere_test_ad.npy")
     vd = np.load("hemisphere_test_vd.npy")
-    x = np.linspace(0, 0.99, 33)
+    x = np.linspace(0, 0.87, 30)
     plt.plot(x, fd, 'o-', label="finite_difference")
     plt.plot(x, ad, 'x-', label="auto_diff")
     plt.plot(x, vd, '+-', label="analytic")

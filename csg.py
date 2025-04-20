@@ -9,11 +9,12 @@
 # need to change back to llvm on my mac
 import mitsuba as mi
 import drjit as dr
-from drjit.cuda import Float, UInt32, UInt64, TensorXf, Array2f, ArrayXf, Bool
+from drjit.cuda import Float, UInt32, UInt64, TensorXf, ArrayXu, ArrayXf, Bool, UInt, Array2u, Int
 from drjit.cuda.ad import Float as FloatD, UInt32 as UInt32D
 import numpy as np
 import torch
 import random
+from collections.abc import Collection
 # dr.JitFlag.PacketOps=True
 
 mi.set_variant('cuda_ad_rgb')
@@ -81,35 +82,165 @@ class CSGNode:
                     state_lists.append(left_st + [not right_st])
         
         return state_lists, left_order + right_order
+    
+# add multiple energy tally
+class MultiGroupTally:
+    def __init__(self, number_of_energy_group):
+        self.radiation_tally = dr.zeros(FloatD, number_of_energy_group)
+        self.maxEnergy = Float(40000000.0)
+        self.minEnergy = Float(1.0 / 40.0)
+        self.energy_width = (self.maxEnergy - self.minEnergy) / number_of_energy_group
+
+    def find_energy_index(self, values):
+        slot_indx = dr.floor((values - self.minEnergy) / self.energy_width)
+        return slot_indx
+    
+    def add_to_tally(self, values):
+        indices = self.find_energy_index(values)
+        dr.scatter_add(self.radiation_tally, values, indices)
+    
+
+def test_find_energy_index(number_neutron):
+    rng = mi.PCG32(size=number_neutron)
+    m_groups_tally = MultiGroupTally(100)
+    energy_value = rng.next_float32() * (m_groups_tally.maxEnergy - m_groups_tally.minEnergy) + m_groups_tally.minEnergy
+    m_groups_tally.add_to_tally(energy_value)
+
 
 class SceneMaterial:
-    def __init__(self, csgnodes, cross_tots, albedos, num_geo, diff=[True, False]):
+    def __init__(self, csgnodes, cross_tots, albedos, num_geo, energy_groups=1):
+        """
+        cross_tots: list of cross sections, if multi_group is true, this is a list of tensor (with the length that equals to the number of groups)
+        albedos: list of albedo, if multi_group is true, this is a list of tensor (with the length of group)
+        
+        By default there is one energy group
+
+        csg_node_list: list of material nodes
+        cross_tot_list: a two dimensional tensor with row idx being material idx and col idx being energy group idx
+        alb_list: a two dimensional tensor with row idx being material idx and col idx being energy group idx
+        node_state_lists: list of states that is lawful for being inside the medium, first dim idx is the idx of the material
+        node_shape_orders: idxs of the shape id in the mitsuba
+        phase_function_cdf: a three dimensional tensor with row idx beinig material idx and dim=1 idx being incident energy group idx, dim=2 being outgoinig energy group idx
+
+        """
         self.csg_node_list = csgnodes
         self.cross_tot_list = cross_tots
-        self.alb_list = albedos
+        self.alb_tot_list = albedos
         self.node_state_lists = [] 
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
         self.num_geo = num_geo
         # which geometry are gradient enabled
-        self.diff = diff
-        
+        # self.diff = diff
+        self.energy_groups = energy_groups
+
+        self.init_multi_group_properties(self.energy_groups)
 
         for node in self.csg_node_list:
             state_list, shape_order = node.state_list()
             self.node_state_lists.append(state_list)
             self.node_shape_orders.append(shape_order)
 
+    def init_multi_group_properties(self, number_of_energy_group):
+        self.energy_groups = number_of_energy_group
+
+        # store the properies as pytorch tensors
+        # init sigmas and albedo
+        # cross sections are two dimensional tensor with dim 0: material_id, dim 1: energy group id
+        # should revise this to load from some dataset
+        if self.energy_groups == 1:
+            self.cross_tot_list = torch.tensor(self.cross_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1)
+            self.alb_tot_list = torch.tensor(self.alb_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1)
+        else:
+            self.cross_tot_list = torch.rand(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32)
+            self.alb_tot_list = torch.rand(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32)
+
+
+        # init phase function
+        # phase function is a three dimensional tensor with dim 0: material_id, dim 1: incident energy group id, dim2 = exiting energy group id
+        # should revise this to load from some dataset / 
+        pdf = torch.zeros([self.num_material, self.energy_groups, self.energy_groups], device='cuda:0', dtype=torch.float32) + 1.0 / self.energy_groups
+        pdf_sum = pdf.sum(dim=2).reshape(self.num_material, self.energy_groups, 1)
+        self.phase_pdf = pdf / pdf_sum
+        
+
+        self.phase_function_cdf = torch.zeros([self.num_material, self.energy_groups, self.energy_groups], device='cuda:0', dtype=torch.float32)
+        
+        # initialize energy groups
+        self.phase_function_cdf[:, :, 0] = self.phase_pdf[:, :, 0]
+        for j in range(1, self.energy_groups):
+            self.phase_function_cdf[:, :, j] = self.phase_pdf[:, :, j] + self.phase_function_cdf[:, :, j-1]
+        
+
+    def get_optical_properties(self, material_idx, energy_idx):
+        return self.cross_tot_list[material_idx, energy_idx], self.alb_tot_list[material_idx, energy_idx], self.phase_function_cdf[material_idx, energy_idx]
+    
+    # def get_optical_properties_dr(self, material_idx, energy_idx):
+    #     return self.cross_tot_list[material_idx, energy_idx], self.alb_tot_list[material_idx, energy_idx], self.phase_function_cdf[material_idx, energy_idx]
+    
     def get_state_by_id(self, node_id):
         return self.node_state_lists[node_id], self.node_shape_orders[node_id]
 
     def __repr__(self):
         return f"there are {len(self.csg_node_list)} materials in the scene"
     
+def test_multi_energy_sigma_t(num_group):
+    shape0 = CSGLeaf(0)
+    shape1 = CSGLeaf(1)
+
+    nodeA = CSGNode("intersection", shape0, shape1)
+    nodeB = CSGNode("difference", shape0, shape1)
+
+    media = SceneMaterial([nodeA, nodeB], [1.5, 1.0], [0.1, 0.1], 2)
+
+    media.init_multi_group_properties(num_group)
+    sigmat, alb, phase = media.get_optical_properties(torch.tensor([1, 1], device="cuda:0", dtype=torch.int64), torch.tensor([0, 0], device="cuda:0", dtype=torch.int64))
+    # print(TensorXf(phase))
+ 
+# test_multi_energy_sigma_t(3)
+# exit(0)
+
+def test_TensorXf(num_material, num_group):
+    sig = torch.rand([num_material, num_group], dtype=torch.float32, device="cuda:0")
+    sig_dr = TensorXf(sig)
+
+    print(" torch tensor", sig)
+    print(" dr tensor", sig_dr)
+
+    material_idx = torch.tensor([0, 1], device="cuda:0", dtype=torch.int64)
+    energy_idx = torch.tensor([2, 3], device="cuda:0", dtype=torch.int64)
+
+    material_idx_dr = Int(material_idx)
+    energy_idx_dr = Int(energy_idx)
+
+    sig_query = sig[material_idx, energy_idx]
+    dr_query = dr.zeros(Array2u, 2)
+    dr_query.x = material_idx_dr
+    dr_query.y = energy_idx_dr
+    #print(dr_query)
+    qz = dr.slice_index(dr.scalar.ArrayXu, shape=(3, 4), indices=(slice(0,1,2), slice(0,1,2)))
+    #print(qz)
+    #help(dr.slice_index)
+    #print(sig_dr[dr_query])
+    #exit(0)
+    # sig_query_dr_material = sig_dr[]
+    # how to specify query dim?
+    # help(sig_dr)
+    #print("query from dr tensor", sig_query_dr_material)
+    # sig_query_dr = sig_query_dr_material[energy_idx]
+
+    
+
+    #print("query from torch tensor", sig_query)
+
+#test_TensorXf(3, 4)
+#exit(0)
+
 class MaterialParameter:
-    def __init__(self, cross_tot_t, alb):
+    def __init__(self, cross_tot_t, alb, cdf=[]):
         self.ext = cross_tot_t
         self.alb = alb
+        self.phase_cdfs = cdf
 
 def get_shape_id(scene, shape_ptr):
     shape_id = dr.zeros(UInt32, dr.width(shape_ptr))
@@ -544,6 +675,8 @@ def test1():
 
     nodeA = CSGNode("intersection", shape0, shape1)
     nodeB = CSGNode("difference", shape0, shape1)
+
+    # two material here
 
     media = SceneMaterial([nodeA, nodeB], [1.5, 1.0], [0.1, 0.1], 2)
     
