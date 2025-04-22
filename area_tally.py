@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # need to change back to llvm on my mac
 import mitsuba as mi
 import drjit as dr
-from drjit.cuda import Float, UInt32, UInt64
+from drjit.cuda import Float, UInt32, UInt64, UInt
 from drjit.cuda.ad import Float as FloatD
 from drjit.cuda.ad import UInt32 as UIntD, TensorXf as TensorXfD
 import numpy as np
@@ -21,6 +21,9 @@ from csg import CSGLeaf, CSGNode, SceneMaterial, MaterialParameter, MultiGroupTa
 
 mi.set_variant('cuda_ad_rgb')
 from constant import DATA_DIR
+
+dr.set_flag(dr.JitFlag.Debug, True)
+# dr.set_log_level(dr.LogLevel.Debug)
 
 
 NUMBER_NEUTRONS = 100000
@@ -93,7 +96,7 @@ def load_test_scene_hemisphere(cross_tots, cross_as):
     shape1 = CSGLeaf(1)
 
     node = CSGNode("difference", shape0, shape1)
-    scm = SceneMaterial([node], cross_tots, cross_as, 2)
+    scm = SceneMaterial([node], cross_tots, cross_as, 2, 4)
     
     return scene, scm
 
@@ -139,23 +142,30 @@ def load_scene_node(cross_tots, cross_as):
     return scene, scm
 
 # def energy_phase(energy_group_ids, scm, material_id):
-def sample_next_energy_group(rng, cdfs):
+def sample_next_energy_group(rng, cdfs, num_energy):
     sample1 = rng.next_float32().torch()
-    group_idx = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
-    phase_energy_pdf = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.float32)
-    count = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
-    for i in range(cdfs.shape[1]):
-        count[(sample1 < cdfs[:, i])] += 1
-        group_idx[(sample1 < cdfs[:, i]) & (count == 1)] = i
-        if i == 0:
-            phase_energy_pdf = cdfs[:, i]
-        else:
-            phase_energy_pdf = cdfs[:, i] - cdfs[:, i-1]
+    # group_idx = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
+    # phase_energy_pdf = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.float32)
+    # count = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
+    # for i in range(cdfs.shape[1]):
+    #     count[(sample1 < cdfs[:, i])] += 1
+    #     group_idx[(sample1 < cdfs[:, i]) & (count == 1)] = i
+    #     if i == 0:
+    #         phase_energy_pdf = cdfs[:, i]
+    #     else:
+    #         phase_energy_pdf = cdfs[:, i] - cdfs[:, i-1]
+    num_ray_idx = dr.arange(UInt, dr.width(rng))
+    num_energy_dr = UInt(num_energy)
+    pos = dr.binary_search(0, num_energy, lambda index: dr.gather(Float, cdfs.array, num_ray_idx * num_energy + index) < sample1)
+    value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos)
+    pre_value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos-1)
+    
+    group_idx = UInt(pos)
+    return group_idx, value - pre_value
+# , pre_value - value
 
-    return group_idx, FloatD(phase_energy_pdf)
 
-
-def test_sample_enxt_energy_group(num_groups, num_neutron):
+def test_sample_next_energy_group(num_groups, num_neutron):
     rng = mi.PCG32(size=num_neutron, initstate=100)
     shape0 = CSGLeaf(0)
     shape1 = CSGLeaf(1)
@@ -166,13 +176,15 @@ def test_sample_enxt_energy_group(num_groups, num_neutron):
     # two material here
     media = SceneMaterial([nodeA, nodeB], [1.5, 1.0], [0.1, 0.1], 2, num_groups)
 
-    group_idx = torch.zeros(num_neutron, device="cuda:0", dtype=torch.long)
-    material_idx = torch.zeros(num_neutron, device="cuda:0", dtype=torch.long)
+    group_idx = UInt(torch.zeros(num_neutron, device="cuda:0", dtype=torch.long))
+    material_idx = UInt(torch.zeros(num_neutron, device="cuda:0", dtype=torch.long))
     sigt, alb, pf = media.get_optical_properties(group_idx, material_idx)
-    next_group_idx, phase_energy_pdf = sample_next_energy_group(rng, pf)
+    next_group_idx, pdf = sample_next_energy_group(rng, pf, media.energy_groups)
     print("next group idx", next_group_idx)
-    print("next pdf idx", phase_energy_pdf)
+    # print("next pdf idx", phase_energy_pdf)
 
+# test_sample_next_energy_group(2, 10)
+# exit(0)
      
 
 def hg(costheta, g):
@@ -788,7 +800,7 @@ def test_increase_height(smallest, largest, stepsize):
     heights = []
     N=10
     while height < largest:
-        print("height", height)
+        # print("height", height)
         Energy = 0.0
         FD_gradient = 0.0
         start = random.randint(0,1000)
@@ -820,7 +832,7 @@ def compute_auto_def_gradient(smallest, largest, stepsize, reparam):
     heights = []
     N = 30
     while height < largest:
-        print("ad height", height)
+        # print("ad height", height)
 
         start = random.randint(0,1000)
         g = 0.0
@@ -871,7 +883,7 @@ def test_light_connection():
     elight = calculate_tally_energy_light_connection(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
     ephase = calculate_tally_energy_reparam(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
 
-    print("elight: ", elight, "ephase: ", ephase)
+    # print("elight: ", elight, "ephase: ", ephase)
 
 
 def recompute_intersect_csg(scene, its, Vs, Fs, ray, shape_id, active):
@@ -884,10 +896,10 @@ def recompute_intersect_csg(scene, its, Vs, Fs, ray, shape_id, active):
     valid_intersect = False
     for i in range(len(Vs)):
         # help(dr)
-        intersect_dist_i, uv, p, intersect = recomputeIntersection(scene, its, Vs[i], Fs[i], ray, its.is_valid() & (UIntD(shape_id) == i) & active)
-        valid_intersect = dr.select((UIntD(shape_id) == i), intersect, valid_intersect)
-        interdist = dr.select((UIntD(shape_id) == i) & active & intersect, intersect_dist_i, interdist)
-        pos = dr.select((UIntD(shape_id) == i) & active & intersect, ray.o + intersect_dist_i * ray.d, pos)
+        intersect_dist_i, uv, p, intersect = recomputeIntersection(scene, its, Vs[i], Fs[i], ray, its.is_valid() & (UInt(shape_id) == i) & active)
+        valid_intersect = dr.select((UInt(shape_id) == i), intersect, valid_intersect)
+        interdist = dr.select((UInt(shape_id) == i) & active & intersect, intersect_dist_i, interdist)
+        pos = dr.select((UInt(shape_id) == i) & active & intersect, ray.o + intersect_dist_i * ray.d, pos)
         # print("its.p, p, intersect", its.p.numpy()[1], p.numpy()[1], intersect.numpy()[1])
     #print("is valid intersect", valid_intersect)
     return interdist, pos, valid_intersect
@@ -913,11 +925,11 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group):
     cross_section_tots = dr.zeros(FloatD, num_rays)
     albedos = dr.zeros(FloatD, num_rays)
 
-    medium_count = dr.zeros(UIntD, num_rays)
-    medium_idx = dr.full(UIntD, scm.num_material, num_rays)
+    medium_count = dr.zeros(UInt, num_rays)
+    medium_idx = dr.full(UInt, scm.num_material, num_rays)
     
     for cur_space in material_spaces[:-1]:
-        in_medium = ~ (UIntD(cur_space) == (scm.num_material))
+        in_medium = ~ (UInt(cur_space) == (scm.num_material))
         medium_count += dr.select(in_medium, 1, 0)
         medium_idx = dr.select((medium_count == 1) & in_medium, cur_space, medium_idx)
 
@@ -933,11 +945,9 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group):
     
     # print(sample_ext_list[medium_idx.torch().long(), :])
     # exit(0)
-    sg, alb, pf = scm.get_optical_properties(medium_idx, energy_group)
+    sg = scm.get_sig(medium_idx, energy_group)
 
-    cross_section_tots = FloatD(sg)
-    albedos = FloatD(alb)
-    phase_cdfs = pf
+    cross_section_tots = sg
     
     distance_sample = sample_distance(cross_section_tots, rng)
     distance_sample = dr.select(through_vaccum, 0.0, distance_sample)
@@ -945,10 +955,9 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group):
     attenuation_sample = dr.exp(-distance_sample * cross_section_tots)
 
     pdf = dr.detach(cross_section_tots * attenuation_sample)
-    features = MaterialParameter(cross_section_tots, albedos, phase_cdfs)
-    return attenuation_sample, pdf, features, through_vaccum
+    return attenuation_sample, pdf, through_vaccum
 
-def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng, energy_group_idx_tensor):
+def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng, energy_group_idx):
     """
     Return: 
         the attenuation of the energy along the ray
@@ -972,7 +981,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     ray = mi.Ray3f(ray_pass)
     num_rays = dr.width(ray)
 
-    cross_section_tots = FloatD(scm.cross_tot_list[:, energy_group_idx_tensor].reshape(energy_group_idx_tensor.shape[0]))
+    # cross_section_tots = FloatD(scm.cross_tot_list[:, energy_group_idx_tensor].reshape(energy_group_idx_tensor.shape[0]))
 
     attenuation = dr.ones(FloatD, num_rays)
     reparam_factor = dr.ones(FloatD, num_rays)
@@ -980,7 +989,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     cur_cross_section_tots = dr.zeros(FloatD, num_rays)
     # cur_alb = dr.zeros(FloatD, num_rays)
 
-    attenuation_sample, pdf, features, tv = sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group_idx_tensor)
+    attenuation_sample, pdf, tv = sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group_idx)
     scatter_pos = ray_pass.o
     end_pos = ray_pass.o
     nerest_hit_from_scatter_pos = dr.zeros(mi.Point3f, num_rays)
@@ -989,8 +998,9 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
 
     attenuation_till_scatter_point = dr.ones(FloatD, num_rays)
 
-    scatter_material_idx = dr.zeros(UIntD, num_rays)
-    
+    scatter_material_idx = dr.zeros(UInt, num_rays)
+    # print("iiniit", type(scatter_material_idx), type(energy_group_idx))
+
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
 
         # recompute the intersection with the gradient attached
@@ -1000,7 +1010,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         # current_distance = next_distance
         
         numerical_mask |= dr.select(~(valid_intersect == intersect[0].is_valid()) & cur_is_valid & sample_active, True, False)
-        material_idx = UIntD(current_material)
+        material_idx = UInt(current_material)
         
 
         # no attenuation in vaccum
@@ -1014,10 +1024,10 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         # cur_cross_section_tots_tensor = cross_section_tots[material_idx]
 
         # TODO: replace this 
-        # cur_sig, cur_alb, cur_phase = scm.get_optical_properties(material_idx_tensor, energy_group_idx_tensor)
+        cur_cross_section_tots = scm.get_sig(material_idx, energy_group_idx)
         
   
-        cur_cross_section_tots = dr.gather(FloatD, cross_section_tots, material_idx)
+        # cur_cross_section_tots = dr.gather(FloatD, cross_section_tots, material_idx)
         # cur_cross_section_tots = FloatD(cur_sig)
    
 
@@ -1031,9 +1041,10 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         # update pdf with current attenuation
         pdf =  dr.select(stop_sample_in_current_space, cur_cross_section_tots * attenuation_sample, pdf)
         
-
+        
         scatter_material_idx = dr.select(stop_sample_in_current_space, material_idx, scatter_material_idx)
-                                         
+        
+
         # compute the point that scatters in the medium
         scatter_pos = dr.select(stop_sample_in_current_space, ray.o + dr.detach(update_dist) * ray.d, scatter_pos)
         dist_reparamed = dr.detach(update_dist / distance)
@@ -1052,10 +1063,12 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         end_pos = dr.select(cur_is_valid & valid_intersect, ray.o, end_pos)
     
     # update feature recorded
-    sig_t, alb, phase = scm.get_optical_properties(scatter_material_idx, energy_group_idx_tensor)
-    features.ext = sig_t
-    features.alb = alb
-    features.phase_cdfs = phase
+    # print(type(scatter_material_idx), type(energy_group_idx))
+    sig_t, alb, phase = scm.get_optical_properties(UInt(scatter_material_idx), energy_group_idx)
+    features = MaterialParameter(sig_t, alb, phase)
+    # features.ext = sig_t
+    # features.alb = alb
+    # features.phase_cdfs = phase
 
     exit_ray = sample_active
     return attenuation, reparam_factor, attenuation_till_scatter_point, pdf, scatter_pos, features, exit_ray, numerical_mask
@@ -1073,16 +1086,20 @@ def release_intersect(its_list):
     for it in its_list:
         del it
 
+
+
 def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current,  number_of_energy_group, reparam):
     """
     Energy dependent version of 'render_nuetron_in_csg_shape'
     """
     # initialize energy tallies with width equals to the number of energy groups
-    Etot = dr.zeros(FloatD, dr.width(ray_current))
+    # print("number of energy group", number_of_energy_group)
+    # exit(0)
+    Etot = dr.zeros(FloatD, number_of_energy_group)
     radiance = dr.zeros(FloatD, dr.width(ray_current)) + 1.0 
     
-    # energy_group_idx = dr.zeros(UIntD, dr.width(ray_current)) # from energy group idx 0 to n, the energy goes from high to low
-    energy_group_idx_torch = torch.zeros((dr.width(ray_current)), dtype=torch.long, device="cuda:0")
+    energy_group_idx = dr.zeros(UInt, dr.width(ray_current)) # from energy group idx 0 to n, the energy goes from high to low
+    # energy_group_idx_torch = torch.zeros((dr.width(ray_current)), dtype=torch.long, device="cuda:0")
 
     group_pdf = dr.ones(FloatD, dr.width(ray_current))
     active = True
@@ -1095,7 +1112,7 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
-                                                                  vertices_list, faces_list, rng, energy_group_idx_torch)
+                                                                  vertices_list, faces_list, rng, energy_group_idx)
         # dr.detach(all_its)
         terminate_ray = mask_invalid | exit_ray
 
@@ -1105,15 +1122,19 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
             pass
         else:
             fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
-            incremental = ((attenuation * radiance * fp / dr.detach(fp) & active)) / dr.detach(group_pdf)
+            incremental = ((attenuation * radiance * fp / dr.detach(fp) & active)) 
+            # / dr.detach(group_pdf)
 
+       
         # add the weight to corresponding energy group
-            Etot_incremental = dr.zeros(FloatD, dr.width( number_of_energy_group))
-        # print(energy_group_idx)
-            # dr.scatter_add(Etot_incremental, incremental, dr.detach(UIntD(energy_group_idx_torch)))
-            Etot += incremental
-            # (Etot_incremental)
-        dr.eval(Etot)
+            # print(number_of_energy_group)
+            # exit(0)
+            Etot_incremental = dr.zeros(FloatD,  number_of_energy_group)
+            # print(energy_group_idx)
+            
+            dr.scatter_add(Etot_incremental, incremental, energy_group_idx)
+            
+            Etot += Etot_incremental
 
         if reparam:
             cross_section_reparam_t = feature.ext * reparam_factor
@@ -1124,10 +1145,11 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         
         active &= (~terminate_ray)
         
-   
+        
         # phase function, sample a direction
         # better sample from the source instead of sample from the phase function
         # wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+        # print("incremental")
         wo = dr.zeros(mi.Vector3f,  dr.width(ray_current))
         wo.y = -1.0
 
@@ -1135,8 +1157,7 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         radiance *= (attenuation_till_scatter / dr.detach(pdf)) * (cross_section_reparam_t * feature.alb) 
 
         #use energy dependent phase function to decide the change of energy group of each particle
-        energy_group_idx_torch, group_pdf = sample_next_energy_group(rng, feature.phase_cdfs)
-        # print(energy_group_idx)
+        energy_group_idx, group_pdf = sample_next_energy_group(rng, feature.phase_cdfs, scm.energy_groups)
 
         # update ray
         ray_current.o = scatter_pos
@@ -1145,7 +1166,9 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         bounceIdx += 1
 
     number = dr.width(ray_current)
+    # print("Etot", Etot)
     return dr.sum(Etot) / number
+    # print("number", number)
     # return Etot / number
 
 def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_current, reparam):
@@ -1368,7 +1391,8 @@ def delta_emission(scene, scm, num_neutrons, seed, Va, AD):
     faces_list = [Fa, Fb]
 
     
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, 1, AD) 
+    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, scm.energy_groups, AD) 
+    # print("out", Etot)
     return Etot
 
 
@@ -1425,24 +1449,29 @@ def test_hemisphere(num_neutrons, variable):
     # energy_grdient_wrt_theta = - dr.exp( - 2.0 * dtheta - 1.0) * (2.0 * (theta + 1.0) / (dtheta))
     print("analytic gradient is", energy_grdient_wrt_theta)
 
-    return gradient.numpy(), auto_grad.numpy(), energy_grdient_wrt_theta.numpy()
+    return gradient.numpy(), auto_grad.numpy(), energy_grdient_wrt_theta.numpy(), energy_ana.numpy(), energyauto.numpy()
     
 def test_hemisphere_range():
     init_value = 0.0
     fd = []
     ad = []
     vd = []
+    vad = []
+    vmd = []
     for i in range(30):
-        f, a, v = test_hemisphere(400000, init_value + i * 0.03)
+        f, a, v, v_ana, v_mc = test_hemisphere(400000, init_value + i * 0.03)
         fd.append(f)
         ad.append(a)
         vd.append(v)
+        vad.append(v_ana)
+        vmd.append(v_mc)
         # print(init_value + i * 0.05)
 
     np.save("hemisphere_test_fd.npy", np.array(fd))
     np.save("hemisphere_test_ad.npy", np.array(ad))
     np.save("hemisphere_test_vd.npy", np.array(vd))
-
+    np.save("hemisphere_test_vana.npy", np.array(vad))
+    np.save("hemisphere_test_vmc.npy", np.array(vmd))
 
 
 def test_2cubes(num_neutrons):

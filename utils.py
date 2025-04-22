@@ -107,11 +107,20 @@ def plot_test_hemisphere():
     fd = np.load("hemisphere_test_fd.npy")
     ad = np.load("hemisphere_test_ad.npy")
     vd = np.load("hemisphere_test_vd.npy")
+
+    vana = np.load("hemisphere_test_vana.npy")
+    vmc = np.load("hemisphere_test_vmc.npy")
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
     x = np.linspace(0, 0.87, 30)
-    plt.plot(x, fd, 'o-', label="finite_difference")
-    plt.plot(x, ad, 'x-', label="auto_diff")
-    plt.plot(x, vd, '+-', label="analytic")
-    plt.legend()
+    ax1.plot(x, fd, 'x-', label="finite_difference")
+    ax1.plot(x, ad, 'x-', label="auto_diff")
+    ax1.plot(x, vd, 'x-', label="analytic")
+    ax1.legend()
+
+    ax2.plot(x, vana, 'o-', label="vana")
+    ax2.plot(x, vmc, 'o-', label="vmc")
+    ax2.legend()
     plt.show()
 
 plot_test_hemisphere()

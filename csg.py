@@ -129,51 +129,80 @@ class SceneMaterial:
         self.node_state_lists = [] 
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
+        self.num_material_ad = UInt32D(len(csgnodes))
         self.num_geo = num_geo
         # which geometry are gradient enabled
         # self.diff = diff
         self.energy_groups = energy_groups
+        self.energy_groups_ad = UInt32D(energy_groups)
 
-        self.init_multi_group_properties(self.energy_groups)
+        self.init_multi_group_properties(energy_groups, len(csgnodes))
 
         for node in self.csg_node_list:
             state_list, shape_order = node.state_list()
             self.node_state_lists.append(state_list)
             self.node_shape_orders.append(shape_order)
 
-    def init_multi_group_properties(self, number_of_energy_group):
-        self.energy_groups = number_of_energy_group
+    def init_multi_group_properties(self, number_of_energy_group, num_of_material):
+        # self.energy_groups = number_of_energy_group
 
         # store the properies as pytorch tensors
         # init sigmas and albedo
         # cross sections are two dimensional tensor with dim 0: material_id, dim 1: energy group id
         # should revise this to load from some dataset
         if self.energy_groups == 1:
-            self.cross_tot_list = torch.tensor(self.cross_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1)
-            self.alb_tot_list = torch.tensor(self.alb_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1)
+            self.cross_tot_list = TensorXf(torch.tensor(self.cross_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
+            self.alb_tot_list = TensorXf(torch.tensor(self.alb_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
         else:
-            self.cross_tot_list = torch.rand(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32)
-            self.alb_tot_list = torch.rand(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32)
+            self.cross_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
+            self.alb_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
 
 
         # init phase function
         # phase function is a three dimensional tensor with dim 0: material_id, dim 1: incident energy group id, dim2 = exiting energy group id
         # should revise this to load from some dataset / 
-        pdf = torch.zeros([self.num_material, self.energy_groups, self.energy_groups], device='cuda:0', dtype=torch.float32) + 1.0 / self.energy_groups
-        pdf_sum = pdf.sum(dim=2).reshape(self.num_material, self.energy_groups, 1)
-        self.phase_pdf = pdf / pdf_sum
-        
+        pdf = torch.zeros([num_of_material, number_of_energy_group, number_of_energy_group], device='cuda:0', dtype=torch.float32) + 1.0 / number_of_energy_group
+        self.pdf = TensorXf(pdf) 
+        # pdf_sum = pdf.sum(dim=2).reshape(self.num_material, self.energy_groups, 1)
+        # self.phase_pdf = pdf / pdf_sum
+        # print("pdf", self.pdf)
+        self.cdfs = dr.cumsum(self.pdf, axis=-1)
+        # print("cdf", self.cdfs)
 
-        self.phase_function_cdf = torch.zeros([self.num_material, self.energy_groups, self.energy_groups], device='cuda:0', dtype=torch.float32)
+        # self.phase_function_cdf = torch.zeros([self.num_material, self.energy_groups, self.energy_groups], device='cuda:0', dtype=torch.float32)
         
         # initialize energy groups
-        self.phase_function_cdf[:, :, 0] = self.phase_pdf[:, :, 0]
-        for j in range(1, self.energy_groups):
-            self.phase_function_cdf[:, :, j] = self.phase_pdf[:, :, j] + self.phase_function_cdf[:, :, j-1]
+        # self.phase_function_cdf[:, :, 0] = self.phase_pdf[:, :, 0]
+        # for j in range(1, self.energy_groups):
+            # self.phase_function_cdf[:, :, j] = self.phase_pdf[:, :, j] + self.phase_function_cdf[:, :, j-1]
+    
+    # def get_cross_section_by_energy(self, energy_idx):
         
+    #     sig = dr.gather(Float, self.cross_tot_list.array, )
+
+    def get_sig(self, material_idx, energy_idx):
+        # print("material idx", type(material_idx))
+        # print("energy idx", type(energy_idx))
+        # print("mateiral", type(self.num_material_ad))
+        return dr.gather(Float, self.cross_tot_list.array, material_idx * self.num_material_ad + energy_idx)
 
     def get_optical_properties(self, material_idx, energy_idx):
-        return self.cross_tot_list[material_idx, energy_idx], self.alb_tot_list[material_idx, energy_idx], self.phase_function_cdf[material_idx, energy_idx]
+        sig = dr.gather(Float, self.cross_tot_list.array, material_idx * self.num_material + energy_idx)
+        alb = dr.gather(Float, self.alb_tot_list.array, material_idx * self.num_material + energy_idx)
+
+        xid, yid  =  dr.meshgrid(dr.arange(UInt, self.energy_groups), dr.arange(UInt, dr.width(material_idx)))
+        # print(type(material_idx), type(energy_idx))
+        material_idx_scattered = dr.gather(UInt, material_idx, yid)
+        energy_idx_scattered = dr.gather(UInt, energy_idx, yid)
+
+        query_idx = material_idx_scattered * self.energy_groups * self.energy_groups + self.energy_groups * energy_idx_scattered + xid
+        phase_cdf = dr.gather(Float, self.cdfs.array, query_idx)
+        phase_cdf = dr.reshape(TensorXf, phase_cdf, (dr.width(material_idx), self.energy_groups))
+
+        return sig, alb, phase_cdf
+
+        # phasefunction = dr.gather()
+        # return self.cross_tot_list[material_idx, energy_idx], self.alb_tot_list[material_idx, energy_idx], self.phase_function_cdf[material_idx, energy_idx]
     
     # def get_optical_properties_dr(self, material_idx, energy_idx):
     #     return self.cross_tot_list[material_idx, energy_idx], self.alb_tot_list[material_idx, energy_idx], self.phase_function_cdf[material_idx, energy_idx]
@@ -200,40 +229,53 @@ def test_multi_energy_sigma_t(num_group):
 # test_multi_energy_sigma_t(3)
 # exit(0)
 
-def test_TensorXf(num_material, num_group):
-    sig = torch.rand([num_material, num_group], dtype=torch.float32, device="cuda:0")
+def test_TensorXf(num_material, num_group, num_ray=2):
+    sig = torch.rand([num_material, num_group, num_group], dtype=torch.float32, device="cuda:0")
     sig_dr = TensorXf(sig)
 
-    print(" torch tensor", sig)
-    print(" dr tensor", sig_dr)
+    # print(" torch tensor", sig)
+    # print(" dr tensor", sig_dr)
 
     material_idx = torch.tensor([0, 1], device="cuda:0", dtype=torch.int64)
     energy_idx = torch.tensor([2, 3], device="cuda:0", dtype=torch.int64)
 
-    material_idx_dr = Int(material_idx)
-    energy_idx_dr = Int(energy_idx)
+    material_idx_dr = UInt(material_idx)
+    energy_idx_dr = UInt(energy_idx)
 
     sig_query = sig[material_idx, energy_idx]
-    dr_query = dr.zeros(Array2u, 2)
-    dr_query.x = material_idx_dr
-    dr_query.y = energy_idx_dr
     #print(dr_query)
-    qz = dr.slice_index(dr.scalar.ArrayXu, shape=(3, 4), indices=(slice(0,1,2), slice(0,1,2)))
+
+    #help(sig_dr.array)
+    
+    xid, yid  =  dr.meshgrid(dr.arange(UInt, num_group), dr.arange(UInt, num_ray))
+    print(xid, yid)
+
+    print("material idx dr", material_idx_dr)
+    material_idx_scattered = dr.gather(UInt, material_idx_dr, yid)
+    energy_idx_scattered = dr.gather(UInt, energy_idx_dr, yid)
+    print(material_idx_scattered)
+    print(energy_idx_scattered)
+
+    query_idx = material_idx_scattered * num_group * num_group + num_group * energy_idx_scattered + xid
+    v = dr.gather(Float, sig_dr.array, query_idx)
+    v = dr.reshape(TensorXf, v, (num_ray, num_group))
+    #(material_idx_dr * num_group + energy_idx_dr)
+    # v = sig_dr[material_idx_dr, energy_idx_dr]
     #print(qz)
     #help(dr.slice_index)
-    #print(sig_dr[dr_query])
+    #print(sig_dr[dr_query])S
     #exit(0)
     # sig_query_dr_material = sig_dr[]
     # how to specify query dim?
     # help(sig_dr)
-    #print("query from dr tensor", sig_query_dr_material)
+    print("query from dr tensor", v)
     # sig_query_dr = sig_query_dr_material[energy_idx]
 
     
 
-    #print("query from torch tensor", sig_query)
+    print("query from torch tensor", sig_query)
 
-#test_TensorXf(3, 4)
+# test_TensorXf(3, 4)
 #exit(0)
 
 class MaterialParameter:
@@ -367,6 +409,7 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     idx = 0
 
     # init_state = np.zeros([ray_num, scm.num_geo], dtype=np.int32)
+    
     init_state_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
     for intersect in its:
         # print("intersect bounces", idx)
