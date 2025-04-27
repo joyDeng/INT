@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # need to change back to llvm on my mac
 import mitsuba as mi
 import drjit as dr
-from drjit.cuda import Float, UInt32, UInt64, UInt
+from drjit.cuda import Float, UInt32, UInt64, UInt, TensorXf
 from drjit.cuda.ad import Float as FloatD
 from drjit.cuda.ad import UInt32 as UIntD, TensorXf as TensorXfD
 import numpy as np
@@ -22,12 +22,12 @@ from csg import CSGLeaf, CSGNode, SceneMaterial, MaterialParameter, MultiGroupTa
 mi.set_variant('cuda_ad_rgb')
 from constant import DATA_DIR
 
-dr.set_flag(dr.JitFlag.Debug, True)
-# dr.set_log_level(dr.LogLevel.Debug)
+# dr.set_flag(dr.JitFlag.Debug, True)
+# dr.set_log_level(dr.LogLevel.Info)
 
 
 NUMBER_NEUTRONS = 100000
-MAX_BOUNCE = 2
+MAX_BOUNCE = 5
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -100,6 +100,66 @@ def load_test_scene_hemisphere(cross_tots, cross_as):
     
     return scene, scm
 
+def load_scene_node_energy_dependent():
+    v  = np.zeros((128, 128, 1), dtype=np.float32) + 0.1
+    image = mi.Bitmap(v)
+    mi.util.write_bitmap("offset.exr", image)
+
+    
+    scene_dict = {
+        'type': 'scene',
+        'offset0': {
+                'type':'bitmap',
+                'filename':"offset.exr",
+            },
+        'offset1': {
+                'type':'bitmap',
+                'filename':"offset.exr",
+            },
+        'A': {
+            'id': 'A',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/torusA.obj",
+            'bsdf': {'type': 'diffuse'}
+        },
+        'B': {
+            'id': 'B',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/torusA.obj",
+            'bsdf': {'type': 'diffuse'}
+        },
+        'C': {
+            'id': 'C',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().translate([0.0, 0.0, 0.0]),
+            'filename': "E:/Research/NeutronInv/INT/scene/torusA.obj",
+            'bsdf': {'type': 'diffuse'}
+        },
+    }
+    scene = mi.load_dict(scene_dict)
+    
+    shape0 = CSGLeaf(0)
+    shape1 = CSGLeaf(1)
+    shape2 = CSGLeaf(2)
+
+    node2 = CSGNode("difference", CSGNode("difference", shape2, shape0), shape1)
+    node1 = CSGNode("difference", CSGNode("intersection", shape2, shape1), shape0)
+    # node1 = CSGNode("difference", CSGNode("union", shape2, shape1), shape0)
+
+    scm = SceneMaterial([node1, node2], [[1.0, 1.0], [1.0, 1.0]], [[0.95, 0.95], [0.95, 0.95]], 3, 2)
+    scm.set_material_sigma(TensorXf([[1.0, 5.0], [1.0, 1.0]]))
+    scm.set_material_ald(TensorXf([[0.95, 0.95], [0.95, 0.95]]))
+    phase_function = TensorXf([
+        [[0.1, 0.9], [0.1, 0.9]],
+        [[0.9, 0.1], [0.9, 0.1]]
+    ])
+    
+    scm.set_phase_function(phase_function)
+
+    return scene, scm
+
 def load_scene_node(cross_tots, cross_as):
     
     v  = np.zeros((64, 64, 1), dtype=np.float32) + 0.1
@@ -141,9 +201,17 @@ def load_scene_node(cross_tots, cross_as):
     
     return scene, scm
 
+def sample_float_32(rng):
+    x = rng.next_float32()
+    dr.eval(x, rng)
+    return x
+
 # def energy_phase(energy_group_ids, scm, material_id):
 def sample_next_energy_group(rng, cdfs, num_energy):
-    sample1 = rng.next_float32().torch()
+    rand1 = sample_float_32(rng)
+    # dr.eval(rand1)
+    sample1 = Float(rand1)
+
     # group_idx = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
     # phase_energy_pdf = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.float32)
     # count = torch.zeros(cdfs.shape[0], device="cuda:0", dtype=torch.long)
@@ -155,7 +223,7 @@ def sample_next_energy_group(rng, cdfs, num_energy):
     #     else:
     #         phase_energy_pdf = cdfs[:, i] - cdfs[:, i-1]
     num_ray_idx = dr.arange(UInt, dr.width(rng))
-    num_energy_dr = UInt(num_energy)
+    # num_energy_dr = UInt(num_energy)
     pos = dr.binary_search(0, num_energy, lambda index: dr.gather(Float, cdfs.array, num_ray_idx * num_energy + index) < sample1)
     value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos)
     pre_value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos-1)
@@ -180,7 +248,8 @@ def test_sample_next_energy_group(num_groups, num_neutron):
     material_idx = UInt(torch.zeros(num_neutron, device="cuda:0", dtype=torch.long))
     sigt, alb, pf = media.get_optical_properties(group_idx, material_idx)
     next_group_idx, pdf = sample_next_energy_group(rng, pf, media.energy_groups)
-    print("next group idx", next_group_idx)
+    # print("next group idx", next_group_idx)
+    # print("next group idx", next_group_idx)
     # print("next pdf idx", phase_energy_pdf)
 
 # test_sample_next_energy_group(2, 10)
@@ -192,7 +261,10 @@ def hg(costheta, g):
     return 1.0 / (4.0 * dr.pi) * (1.0 - g * g ) / (demon * dr.sqrt(demon)); 
 
 def sample_direction_hg(rng, wi, g):
-    sample1, sample2 = rng.next_float32(), rng.next_float32()
+    sample1, sample2 = sample_float_32(rng), sample_float_32(rng)
+    # dr.eval(sample1, rng)
+    # sample2 =  rng.next_float32()
+    # dr.eval(sample2, rng)
     sqrTerm = (1.0 - g * g ) / (  1.0 - g + 2.0 * g * sample1)
     cosTheta  =  dr.select(g < 1e-3,  1.0 - 2.0 * sample1, (1.0 + g * g - sqrTerm * sqrTerm) / (2.0 * g) )
 
@@ -204,20 +276,23 @@ def sample_direction_hg(rng, wi, g):
     return wo
 
 def sample_dir_origin_from_ring_nosym(rng, radius):
-    sample1 = rng.next_float32()
+    sample1 = sample_float_32(rng)
+    # dr.eval(sample1, rng)
     number_neutrons = dr.width(sample1)
     angle = 2.0 * dr.pi * sample1
 
     o = dr.zeros(mi.Vector3f, number_neutrons)
     o.x = radius * dr.sin(angle)
+    # o.x = 5.0
     o.z = radius * dr.cos(angle)
-    o.y = 0.2 * dr.cos(5 * angle)
-
-    costheta = (0.5 - rng.next_float32()) * 2.0
-    phi = 2.0 * dr.pi * rng.next_float32()
+    # o.y = 0.2 * dr.cos(5 * angle)
+    
+    costheta = (0.5 - sample_float_32(rng)) * 2.0
+    phi = 2.0 * dr.pi * sample_float_32(rng)
     sintheta = dr.sqrt(1.0 - dr.power(costheta, 2.0))
 
     v = dr.zeros(mi.Vector3f, number_neutrons)
+    # v.x = -1
     v.x = sintheta * dr.cos(phi)
     v.z = sintheta * dr.sin(phi)
     v.y = costheta
@@ -226,7 +301,8 @@ def sample_dir_origin_from_ring_nosym(rng, radius):
     return v, o
 
 def sample_dir_origin_from_ring(rng, radius):
-    sample1 = rng.next_float32()
+    sample1 = sample_float_32(rng)
+    # dr.eval(sample1, rng)
     number_neutrons = dr.width(sample1)
     angle = 2.0 * dr.pi * sample1
 
@@ -234,7 +310,7 @@ def sample_dir_origin_from_ring(rng, radius):
     o.x = radius * dr.sin(angle)
     o.z = radius * dr.cos(angle)
 
-    sample2 = dr.cos(rng.next_float32() * 2 * dr.pi)
+    sample2 = dr.cos(sample_float_32(rng) * 2 * dr.pi)
     sin_theta = dr.sqrt(1.0 - dr.power(sample2, 2.0))
 
     v = dr.zeros(mi.Vector3f, number_neutrons)
@@ -247,7 +323,7 @@ def sample_dir_origin_from_ring(rng, radius):
 
 def sample_dir_from_unit_ring(rng, radius, cos_theta=0.0):
     #sample position on the ring
-    sample1 = rng.next_float32()
+    sample1 = sample_float_32(rng)
     number_neutrons = dr.width(sample1)
     angle = 2.0 * dr.pi * sample1
     
@@ -276,7 +352,7 @@ def sample_dir_from_unit_ring(rng, radius, cos_theta=0.0):
 
 def sample_dir_from_unit_sphere(rng):
     v = dr.zeros(mi.Vector3f, NUMBER_NEUTRONS)
-    sample1, sample2 = rng.next_float32(), rng.next_float32()
+    sample1, sample2 = sample_float_32(rng), sample_float_32(rng)
     v.z = (0.5 - sample1) * 2.0
     sin_theta = dr.sqrt(1.0 - dr.power(v.z, 2.0))
     v.x  = sin_theta * dr.sin(dr.pi * 2.0 * sample2)
@@ -285,7 +361,9 @@ def sample_dir_from_unit_sphere(rng):
 
 # RETURN a float distance that is sampled proportional to the transmittance term
 def sample_distance(sig_t, rng):
-    distance = - dr.log(1.0 - rng.next_float32()) / dr.detach(sig_t)
+    rnd1 = sample_float_32(rng)
+    dr.eval(rnd1, rng)
+    distance = - dr.log(1.0 - rnd1) / dr.detach(sig_t)
     return distance
 
 # RETURN True if test current point is outside of the filter
@@ -517,7 +595,7 @@ def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_s
     active = True
     
     detector = scene.emitters()[0]
-    ep = detector.sample_position(0.0, mi.Point2f(rng.next_float32(), rng.next_float32()))[0]
+    ep = detector.sample_position(0.0, mi.Point2f(sample_float_32(rng), sample_float_32(rng)))[0]
     
     edir = (ep.p - ray_init.o) / dr.norm(ep.p - ray_init.o)
     ray_emitter = mi.Ray3f(source_origin, edir)
@@ -607,7 +685,7 @@ def calculate_tally_energy_light_connection(height, cross_section_tot_t, cross_s
         active &= (~escape)
         active_emitter = active
 
-        ep = detector.sample_position(0.0, mi.Point2f(rng.next_float32(), rng.next_float32()))[0]
+        ep = detector.sample_position(0.0, mi.Point2f(sample_float_32(rng), sample_float_32(rng)))[0]
         
         edir = (ep.p - p0) / dr.norm(ep.p - p0)
         ray_emitter = mi.Ray3f(p0, edir)
@@ -800,12 +878,12 @@ def test_increase_height(smallest, largest, stepsize):
     heights = []
     N=10
     while height < largest:
-        # print("height", height)
+        
         Energy = 0.0
         FD_gradient = 0.0
         start = random.randint(0,1000)
         for i in range(start, start+N):
-            #print("seed: ", i)
+            
             energy = energy_tally_height(height, i)
             Energy += energy.numpy() / N
             del energy
@@ -819,7 +897,7 @@ def test_increase_height(smallest, largest, stepsize):
         heights.append(height)
         height += stepsize
     energies = np.array(list_energy)
-    print(heights)
+    # print(heights)
     heights = np.array(heights)
     gradients_fd = np.array(list_gradient)
     return energies, heights, gradients_fd
@@ -848,8 +926,7 @@ def compute_auto_def_gradient(smallest, largest, stepsize, reparam):
             del dEdR, Energy
         
         list_gradient.append(g)
-        # print(dEdR)
-        # list_gradient.append(1.0)
+  
         list_energy.append(energy)
         heights.append(height)
         height += stepsize
@@ -882,9 +959,6 @@ def test_fd_ad():
 def test_light_connection():
     elight = calculate_tally_energy_light_connection(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
     ephase = calculate_tally_energy_reparam(FloatD(2.5), FloatD(0.5), FloatD(0.0), 0)
-
-    # print("elight: ", elight, "ephase: ", ephase)
-
 
 def recompute_intersect_csg(scene, its, Vs, Fs, ray, shape_id, active):
     """
@@ -999,15 +1073,13 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     attenuation_till_scatter_point = dr.ones(FloatD, num_rays)
 
     scatter_material_idx = dr.zeros(UInt, num_rays)
-    # print("iiniit", type(scatter_material_idx), type(energy_group_idx))
 
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
 
         # recompute the intersection with the gradient attached
         cur_is_valid = intersect[1]
         distance, p, valid_intersect = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
-        # distance = next_distance - current_distance
-        # current_distance = next_distance
+        dr.eval()
         
         numerical_mask |= dr.select(~(valid_intersect == intersect[0].is_valid()) & cur_is_valid & sample_active, True, False)
         material_idx = UInt(current_material)
@@ -1017,7 +1089,7 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         in_medium = ~ (material_idx == scm.num_material)
         material_idx = dr.select(in_medium, material_idx, 0)
         
-        
+        # print("current material", current_material)
         # material_idx_tensor = material_idx.torch().long()
         # material_idx_tensor[material_idx_tensor == scm.num_material] = 0
         # get cross_section_value of materials
@@ -1061,14 +1133,12 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         ray.o += distance * ray.d
         
         end_pos = dr.select(cur_is_valid & valid_intersect, ray.o, end_pos)
-    
-    # update feature recorded
-    # print(type(scatter_material_idx), type(energy_group_idx))
+
     sig_t, alb, phase = scm.get_optical_properties(UInt(scatter_material_idx), energy_group_idx)
+    # print("energy_group_idx", energy_group_idx)
+    # print("sig_t", sig_t)
+    # print("material idx", scatter_material_idx)
     features = MaterialParameter(sig_t, alb, phase)
-    # features.ext = sig_t
-    # features.alb = alb
-    # features.phase_cdfs = phase
 
     exit_ray = sample_active
     return attenuation, reparam_factor, attenuation_till_scatter_point, pdf, scatter_pos, features, exit_ray, numerical_mask
@@ -1088,20 +1158,21 @@ def release_intersect(its_list):
 
 
 
-def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current,  number_of_energy_group, reparam):
+def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, reparam):
     """
     Energy dependent version of 'render_nuetron_in_csg_shape'
     """
     # initialize energy tallies with width equals to the number of energy groups
     # print("number of energy group", number_of_energy_group)
     # exit(0)
+    num_neutron = dr.width(ray_current)
+    number_of_energy_group = scm.energy_groups
     Etot = dr.zeros(FloatD, number_of_energy_group)
-    radiance = dr.zeros(FloatD, dr.width(ray_current)) + 1.0 
+    radiance = dr.zeros(FloatD, num_neutron) + 1.0 
     
-    energy_group_idx = dr.zeros(UInt, dr.width(ray_current)) # from energy group idx 0 to n, the energy goes from high to low
-    # energy_group_idx_torch = torch.zeros((dr.width(ray_current)), dtype=torch.long, device="cuda:0")
+    energy_group_idx = dr.zeros(UInt, num_neutron) # from energy group idx 0 to n, the energy goes from high to low
 
-    group_pdf = dr.ones(FloatD, dr.width(ray_current))
+    # group_pdf = dr.ones(FloatD, dr.width(ray_current))
     active = True
 
     bounceIdx = 0
@@ -1117,57 +1188,48 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         terminate_ray = mask_invalid | exit_ray
 
         if bounceIdx == 0:
-            # incremental = (attenuation * radiance & active)
-            
-            pass
+            incremental = (attenuation * radiance & active)
         else:
             fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
             incremental = ((attenuation * radiance * fp / dr.detach(fp) & active)) 
-            # / dr.detach(group_pdf)
 
-       
         # add the weight to corresponding energy group
-            # print(number_of_energy_group)
-            # exit(0)
-            Etot_incremental = dr.zeros(FloatD,  number_of_energy_group)
-            # print(energy_group_idx)
-            
-            dr.scatter_add(Etot_incremental, incremental, energy_group_idx)
-            
-            Etot += Etot_incremental
+        Etot_incremental = dr.zeros(FloatD,  number_of_energy_group)
+        dr.scatter_add(Etot_incremental, incremental, energy_group_idx)
+        Etot += Etot_incremental
+        # print("Etot", Etot, "at bounce", bounceIdx)
+        # print("Etot_incremental", Etot_incremental, "at bounce", bounceIdx)
+        # print("\n")
 
         if reparam:
             cross_section_reparam_t = feature.ext * reparam_factor
             pdf = pdf * reparam_factor
         else:
             cross_section_reparam_t = feature.ext
-        
-        
+
         active &= (~terminate_ray)
         
         
         # phase function, sample a direction
         # better sample from the source instead of sample from the phase function
-        # wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+        wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
         # print("incremental")
-        wo = dr.zeros(mi.Vector3f,  dr.width(ray_current))
-        wo.y = -1.0
+        # wo = dr.zeros(mi.Vector3f,  dr.width(ray_current))
+        # wo.y = -1.0
 
         wi_theta = -ray_current.d
         radiance *= (attenuation_till_scatter / dr.detach(pdf)) * (cross_section_reparam_t * feature.alb) 
 
         #use energy dependent phase function to decide the change of energy group of each particle
         energy_group_idx, group_pdf = sample_next_energy_group(rng, feature.phase_cdfs, scm.energy_groups)
-
         # update ray
         ray_current.o = scatter_pos
         ray_current.d = wo
 
         bounceIdx += 1
 
-    number = dr.width(ray_current)
-    # print("Etot", Etot)
-    return dr.sum(Etot) / number
+    return Etot / num_neutron
+# / number
     # print("number", number)
     # return Etot / number
 
@@ -1391,7 +1453,7 @@ def delta_emission(scene, scm, num_neutrons, seed, Va, AD):
     faces_list = [Fa, Fb]
 
     
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, scm.energy_groups, AD) 
+    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, AD) 
     # print("out", Etot)
     return Etot
 
@@ -1402,7 +1464,7 @@ def delta_emission(scene, scm, num_neutrons, seed, Va, AD):
     
 #     E = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current,  number_groups, False)
 
-
+import random
 
 def test_hemisphere(num_neutrons, variable):
     scene, scm = load_test_scene_hemisphere(1.0, 1.0)
@@ -1412,14 +1474,16 @@ def test_hemisphere(num_neutrons, variable):
     theta = variable
     # height = 1.0 - theta
 
+    
     Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
     Va_ = dr.zeros(mi.Point3f, dr.width(Va)) + Va 
     Va_.y -= ( theta + delta )
-    energy_plus = delta_emission(scene, scm, num_neutrons, 0, Va_, False)
+    randseed = random.randint(0, 10000)
+    energy_plus = delta_emission(scene, scm, num_neutrons, randseed, Va_, False)
 
     Va_ = dr.zeros(mi.Point3f, dr.width(Va)) + Va 
     Va_.y -= ( theta - delta )
-    energy_minus = delta_emission(scene, scm, num_neutrons, 0, Va_, False)
+    energy_minus = delta_emission(scene, scm, num_neutrons, randseed, Va_, False)
 
     gradient = ( energy_plus -  energy_minus ) / (2.0 * delta)
     print("finite difference f(x+delta), f(x-delta) and gradient are", energy_plus.numpy(), energy_minus.numpy(), gradient.numpy())
@@ -1431,7 +1495,7 @@ def test_hemisphere(num_neutrons, variable):
 
     Va_ = dr.zeros(mi.Point3f, dr.width(Va)) + Va 
     Va_.y -= theta
-    energyauto = delta_emission(scene, scm, num_neutrons, 0, Va_, True)
+    energyauto = delta_emission(scene, scm, num_neutrons, randseed, Va_, True)
     dr.backward(energyauto)
     auto_grad = dr.grad(theta)
     print("\nauto diff value is ", energyauto)
@@ -1450,7 +1514,16 @@ def test_hemisphere(num_neutrons, variable):
     print("analytic gradient is", energy_grdient_wrt_theta)
 
     return gradient.numpy(), auto_grad.numpy(), energy_grdient_wrt_theta.numpy(), energy_ana.numpy(), energyauto.numpy()
-    
+
+import json
+
+def dump_history(kernel_history, filename="history.txt"):
+    print(type(kernel_history))
+    with open(filename, 'w') as file:
+        # file.write(str(kernel_history))
+        for h in kernel_history:
+            file.writelines(str(h) + "\n")
+
 def test_hemisphere_range():
     init_value = 0.0
     fd = []
@@ -1459,7 +1532,13 @@ def test_hemisphere_range():
     vad = []
     vmd = []
     for i in range(30):
-        f, a, v, v_ana, v_mc = test_hemisphere(400000, init_value + i * 0.03)
+
+        with dr.scoped_set_flag(dr.JitFlag.KernelHistory):
+            f, a, v, v_ana, v_mc = test_hemisphere(400000, init_value + i * 0.03)
+        hist = dr.kernel_history()
+        dump_history(hist)
+        exit(0)
+ 
         fd.append(f)
         ad.append(a)
         vd.append(v)

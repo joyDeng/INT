@@ -129,20 +129,55 @@ class SceneMaterial:
         self.node_state_lists = [] 
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
-        self.num_material_ad = UInt32D(len(csgnodes))
+        # self.num_material_ad = UInt32D(len(csgnodes))
         self.num_geo = num_geo
         # which geometry are gradient enabled
         self.energy_groups = energy_groups
-        self.energy_groups_ad = UInt32D(energy_groups)
+        # self.energy_groups_ad = UInt32D(energy_groups)
 
         self.init_multi_group_properties(energy_groups, len(csgnodes))
 
         # replace with drjit
         for node in self.csg_node_list:
             state_list, shape_order = node.state_list()
-
-            self.node_state_lists.append(state_list)
+            # we have problem here when size of state list is larger than 1
+            # print(state_list, shape_order)
+            shape_id = UInt(shape_order)
+            state_array = np.array(state_list).astype(np.int32)
+            
+            state_num = state_array.shape[0]
+            geo_num_compress = state_array.shape[1]
+            states = TensorXf(state_array)
+            geo_idx = dr.zeros(TensorXf, (state_num, geo_num_compress))
+            geo_idx += shape_id
+  
+            states_extend = dr.zeros(TensorXf, (state_num, self.num_geo))
+            xidx, yidx = dr.meshgrid(dr.arange(UInt, state_num), dr.arange(UInt, state_array.shape[1]))
+            # print("states array", states)
+            # print(xidx)
+            # print(yidx)
+            # print("geo_idx", geo_idx)
+            if state_num > 1:
+                ridx = yidx
+            else:
+                ridx = xidx
+            
+            dr.scatter(states_extend.array, states.array, ridx * self.num_geo + geo_idx.array)
+            # print("state extend", states_extend)
+            # exit(0)
+            # state_full = dr.zeros(UInt, self.num_geo)
+            # print(states_extend)
+            # exit(0)
+            # dr.scatter(state_full, state_list, shape_order)
+            # print("geo_idx", geo_idx.array)
+            # print("xidx", xidx)
+            # print("yidx", yidx)
+            # print("idx", xidx * self.num_geo + geo_idx.array)
+            # print("state_list", states_extend)
+            # print("extend state list", states_extend)
+            self.node_state_lists.append(states_extend)
             self.node_shape_orders.append(UInt(shape_order))
+        # exit(0)
 
     def init_multi_group_properties(self, number_of_energy_group, num_of_material):
         # store the properies as pytorch tensors
@@ -156,21 +191,35 @@ class SceneMaterial:
             self.cross_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
             self.alb_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
 
-
         # init phase function
         # phase function is a three dimensional tensor with dim 0: material_id, dim 1: incident energy group id, dim2 = exiting energy group id
         # should revise this to load from some dataset / 
         pdf = torch.zeros([num_of_material, number_of_energy_group, number_of_energy_group], device='cuda:0', dtype=torch.float32) + 1.0 / number_of_energy_group
         self.pdf = TensorXf(pdf) 
         self.cdfs = dr.cumsum(self.pdf, axis=-1)
-        
+
+    def set_material_sigma(self, value):
+        """set material tot cross section, this should be a tensor of dim num_material x num_energy_level"""
+        self.cross_tot_list = value
+        dr.make_opaque(self.cross_tot_list)
+
+    def set_material_ald(self, value):
+        """set material albedo, this should be a tensor of dim num_material x num_energy_level"""
+        self.alb_tot_list = value
+        dr.make_opaque(self.alb_tot_list)
+    
+    def set_phase_function(self, value):
+        """set material phase function, this should be a tensor of dim num_material x num_energy_level x num_energy_level"""
+        self.pdf = value
+        self.cdfs = dr.cumsum(self.pdf, axis=-1)
+        dr.make_opaque(self.cdfs)
 
     def get_sig(self, material_idx, energy_idx):
-        return dr.gather(Float, self.cross_tot_list.array, material_idx * self.num_material_ad + energy_idx)
+        return dr.gather(Float, self.cross_tot_list.array, material_idx * self.energy_groups + energy_idx)
 
     def get_optical_properties(self, material_idx, energy_idx):
-        sig = dr.gather(Float, self.cross_tot_list.array, material_idx * self.num_material + energy_idx)
-        alb = dr.gather(Float, self.alb_tot_list.array, material_idx * self.num_material + energy_idx)
+        sig = dr.gather(Float, self.cross_tot_list.array, material_idx * self.energy_groups + energy_idx)
+        alb = dr.gather(Float, self.alb_tot_list.array, material_idx * self.energy_groups + energy_idx)
 
         xid, yid  =  dr.meshgrid(dr.arange(UInt, self.energy_groups), dr.arange(UInt, dr.width(material_idx)))
         # print(type(material_idx), type(energy_idx))
@@ -181,9 +230,9 @@ class SceneMaterial:
         phase_cdf = dr.gather(Float, self.cdfs.array, query_idx)
         phase_cdf = dr.reshape(TensorXf, phase_cdf, (dr.width(material_idx), self.energy_groups))
 
+        dr.make_opaque(sig, alb, phase_cdf)
         return sig, alb, phase_cdf
 
-    
     def get_state_by_id(self, node_id):
         return self.node_state_lists[node_id], self.node_shape_orders[node_id]
 
@@ -236,13 +285,13 @@ def test_TensorXf(num_material, num_group, num_ray=2):
     #help(sig_dr.array)
     
     xid, yid  =  dr.meshgrid(dr.arange(UInt, num_group), dr.arange(UInt, num_ray))
-    print(xid, yid)
+    # print(xid, yid)
 
-    print("material idx dr", material_idx_dr)
+    # print("material idx dr", material_idx_dr)
     material_idx_scattered = dr.gather(UInt, material_idx_dr, yid)
     energy_idx_scattered = dr.gather(UInt, energy_idx_dr, yid)
-    print(material_idx_scattered)
-    print(energy_idx_scattered)
+    # print(material_idx_scattered)
+    # print(energy_idx_scattered)
 
     query_idx = material_idx_scattered * num_group * num_group + num_group * energy_idx_scattered + xid
     v = dr.gather(Float, sig_dr.array, query_idx)
@@ -256,7 +305,7 @@ def test_TensorXf(num_material, num_group, num_ray=2):
     # sig_query_dr_material = sig_dr[]
     # how to specify query dim?
     # help(sig_dr)
-    print("query from dr tensor", v)
+    # print("query from dr tensor", v)
     # sig_query_dr = sig_query_dr_material[energy_idx]
 
     
@@ -273,10 +322,9 @@ class MaterialParameter:
         self.phase_cdfs = cdf
 
 def get_shape_id(scene, shape_ptr):
-    shape_id = dr.zeros(UInt32, dr.width(shape_ptr))
-    i = 0
+    shape_id = dr.zeros(UInt, dr.width(shape_ptr))
+    i = dr.opaque(UInt, 0)
     for s in scene.shapes():
-        # help(dr.e)
         shape_id = dr.select(s == shape_ptr, i, shape_id)
         i += 1
     return shape_id
@@ -288,20 +336,22 @@ def geo_intersect(scene, ray, active_ray):
     active = True & active_ray
     trace_active = True
 
-    i = 0
+    # i = 0
     continue_trace = True
     while continue_trace: # check whether there is a infinite while loop
         its = scene.ray_intersect(iter_ray)
+        dr.eval(its)
         shape_id = get_shape_id(scene, its.shape)
         active = dr.select(its.is_valid() & active, True, False)
-        fact = dr.select(active, 1, 0)
-        trace_active = dr.sum(fact)
-        if trace_active > 0:
+        # fact = dr.select(active, 1, 0)
+        # trace_active = dr.sum(fact)
+        continue_trace = dr.any(active)
+        if continue_trace:
             its_list.append([its, active, shape_id])
             iter_ray = mi.Ray3f(its.spawn_ray(iter_ray.d))
-        else:
-            continue_trace = False
-        i += 1
+        # else:
+        #     continue_trace = False
+        # i += 1
     return its_list
 
 def count_active_intersect(it_list):
@@ -343,8 +393,6 @@ def inside_by_node_id(query_state, scm, node_id):
     # shape_used[shape_ids] = 1
     
     shape_used = dr.zeros(UInt, scm.num_geo)
-    # print(shape_ids)
-    # print(scm.num_geo)
     dr.scatter(shape_used, 1, shape_ids)
     shape_mask_out = dr.compress(shape_used == 0)
     for sid in range(dr.width(shape_mask_out)):
@@ -353,11 +401,12 @@ def inside_by_node_id(query_state, scm, node_id):
     # query_state[ray_idx * scm.num_geo + shape_mask_out] = 0
     # print(query_state)
     # exit(0)
-    for state in valid_state_list:
-        
-        valid_state = val + TensorXf(state)
+    for state_idx in range(valid_state_list.shape[0]):
+        # print(state, val)
+        valid_state = val + TensorXf(valid_state_list[state_idx])
+        # print("valid state", valid_state, state_idx)
         if shape_mask_out.shape[0] > 0:
-            dr.scatter(valid_state, 0, shape_mask_out)
+            dr.scatter(valid_state.array, 0, shape_mask_out)
         # for sid in range(dr.width(shape_mask_out)):
         #     valid_state[shape_mask_out[sid]] = 0
 
@@ -365,7 +414,7 @@ def inside_by_node_id(query_state, scm, node_id):
         
         v = (valid_state == query_state)
         value = dr.select(v, 1.0, 0.0)
-        # print(value)
+        
         t = dr.reduce(dr.ReduceOp.Add, value, axis=1)
         matching_idx = dr.compress((t == scm.num_geo).array)
    
@@ -386,7 +435,8 @@ def material_node_ids(scm, space_state, ray_num):
     material_ids = dr.zeros(UInt, ray_num) + scm.num_material
     # print(space_state)
     query_state_binary = 2.0 * (space_state / 2 - dr.floor(space_state / 2))
-
+    # print("binary state", query_state_binary)
+    # print("\n")
     # query_state_binary = space_state % 2
     for node_id in range(len(scm.csg_node_list)):
         in_node_mask = inside_by_node_id(query_state_binary, scm, node_id)
@@ -403,7 +453,7 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     #   ray_dir: direction of the ray is traveling TODO: this parameter might not be neccessary
     """
     geo_state_list = []
-    idx = 0
+    # idx = 0
     
     # init_state_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
     
@@ -440,7 +490,7 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
         geo_state_list.append(trace_space)
         # drtrace_space.array
 
-        idx += 1
+        # idx += 1
 
 
         
@@ -457,8 +507,9 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     for state in geo_state_list:
         # print("state_dr", init_state_dr)
         # print("cur_state", cur_state)
+        
         cur_state = next_state(cur_state, state)
-        # print("cur_state", cur_state)
+        # print("cur_state", cur_state, "init_state", init_state_dr)
         # exit(0)
         cur_material_id = material_node_ids(scm, cur_state, ray_num)
         # print(cur_material_id)
@@ -533,10 +584,14 @@ def scene_material_intersect(scene, rays, scm, active):
     # get all intersction of ray with the scene geometries  
     its = dr.detach(geo_intersect(scene, rays, active))
     num_rays = dr.width(rays)
+    # v = 1
+    # print(type(num_rays), type(v))
     material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
+    # print(material_spaces)
+    # exit(0)
     # remove the invalid geometry ray interesction
-    num_intersections = len(its)
-    assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
+    # num_intersections = len(its)
+    # assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
     return its, material_spaces
 
 
@@ -715,11 +770,12 @@ def test1():
     v.x = -1.0
     o = dr.zeros(mi.Vector3f, num_ray)
     o.x = 5.0
-    o.z = dr.linspace(Float, -1.0, 1.0, num_ray)
+    o.z = 0.0
+    # >dr.linspace(Float, -1.0, 1.0, num_ray)
     rays = mi.Ray3f(o, v)
 
     its, material_spaces = scene_material_intersect(scene, rays, media, True)
-    # print(material_spaces)
+    print(material_spaces)
     # print("its", its)
     # print("material ids", material_spaces)
     # first_hit = ith_hit_from_current(its, material_spaces, num_ray, 0)
