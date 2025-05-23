@@ -1,6 +1,6 @@
 
 # used only on my windows machine
-# import sys
+import sys
 # sys.path = ["."] + sys.path[2:]
 
 # print(sys.path)
@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import random
 from collections.abc import Collection
+
 # dr.JitFlag.PacketOps=True
 
 mi.set_variant('cuda_ad_rgb')
@@ -163,18 +164,6 @@ class SceneMaterial:
                 ridx = xidx
             
             dr.scatter(states_extend.array, states.array, ridx * self.num_geo + geo_idx.array)
-            # print("state extend", states_extend)
-            # exit(0)
-            # state_full = dr.zeros(UInt, self.num_geo)
-            # print(states_extend)
-            # exit(0)
-            # dr.scatter(state_full, state_list, shape_order)
-            # print("geo_idx", geo_idx.array)
-            # print("xidx", xidx)
-            # print("yidx", yidx)
-            # print("idx", xidx * self.num_geo + geo_idx.array)
-            # print("state_list", states_extend)
-            # print("extend state list", states_extend)
             self.node_state_lists.append(states_extend)
             self.node_shape_orders.append(UInt(shape_order))
         # exit(0)
@@ -722,6 +711,279 @@ def visualize_intersect(it_lists, material_spaces, ray_num):
 
     plt.show()
 
+def test_tracklength_1D(bounce_a, sigma_t, number_neutron, resolution, length):
+    rng = mi.PCG32(size=number_neutron)
+    # v = rng.next_float32()
+    sample_distance = - dr.log(1.0 - rng.next_float32()) / sigma_t
+    a = FloatD(bounce_a)
+    dr.enable_grad(a)
+    
+    # sample_distance_reparam = - dr.log(1.0 - rng.next_float32()) / (reparam_sig_t)
+    # print(sample_distance_reparam)
+    # sample_distance = dr.detach(sample_distance_reparam) * a
+    distances = dr.zeros(Float, resolution) + length / resolution
+    distances = dr.cumsum(distances)
+    # print(distances)
+    accumulate = dr.zeros(FloatD, resolution)
+    grad = dr.zeros(FloatD, resolution)
+    
+    for i in range(resolution):
+        # print(type(accumulate), type(dr.sum(dr.select(sample_distance > distances[i],  1.0 / number_neutron, 0.0))))
+        A = FloatD(distances[i])
+        dr.enable_grad(A)
+        reparam_sig_t = sigma_t * A
+        one = dr.exp(-reparam_sig_t)
+        value = dr.sum(dr.select(sample_distance > A, one / dr.detach(one) / number_neutron, 0.0))
+        dr.backward(value)
+        gradients_num = dr.grad(A)
+        
+        dr.scatter(accumulate, value, UInt(i))
+        dr.scatter(grad, gradients_num, UInt(i))
+    
+    tau = dr.exp(-distances * sigma_t)
+    grad_ana = -sigma_t * dr.exp(-distances * sigma_t)
+    print("transmittance num:", accumulate)
+    print("transmittance ana:", tau)
+    print("gradients num:", gradients_num)
+    print("gradients ana:", -sigma_t * dr.exp(-distances * sigma_t))
+    # fig = plt.figure()
+    
+    
+    plt.plot(distances.numpy(), accumulate.numpy(), '-o', label="tau_track_length", alpha=0.5, )
+    plt.plot(distances.numpy(), tau.numpy(), '-x', label="tau_ana", alpha=0.5)
+    plt.plot(distances.numpy(), grad.numpy(), '-o',label="grad_tracklength_auto_diff", alpha=0.5)
+    plt.plot(distances.numpy(), grad_ana.numpy(), '-+', label="grad_ana", alpha=0.5)
+    plt.legend()
+    plt.show()
+
+class Beams():
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+        self.length = dr.norm(end - start)
+
+    def end_point_in_box(self, bl, tr):
+        return (self.end.x >= bl.x) & (self.end.x < tr.x) & (self.end.y >= bl.y) & (self.end.y < tr.y)
+
+    def intersect(self, bl, tr):
+        """
+        RETURN distance of the ray overlapping with the pixel
+        """
+
+        distance = dr.zeros(Float, dr.width(self.start))
+
+        # print("start, end", self.start, self.end)
+        # print("bl, tr", bl, tr)
+        # print("length", self.length)
+        
+        inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y)
+        inside_end = (bl.x <= self.end.x) & (tr.x >= self.end.x) & (bl.y <= self.end.y) & (tr.y >= self.end.y)
+
+        dir = self.end - self.start
+        dir = dir / dr.norm(dir)
+        # intersect with x=left
+        d_tx_left = (bl.x - self.start.x) / dir.x
+        d_tx_right = (tr.x - self.start.x) / dir.x
+        d_ty_bot = (bl.y - self.start.y) / dir.y
+        d_ty_top = (tr.y - self.start.y) / dir.y
+
+        ptxl = d_tx_left * dir + self.start
+        ptxr = d_tx_right * dir + self.start
+        ptyb = d_ty_bot * dir + self.start
+        ptyt = d_ty_bot * dir + self.start
+
+        txl_valid = (ptxl.y > bl.y) & (ptxl.y < tr.y) & (d_tx_left > 0.0) & (d_tx_left < self.length)
+        txr_valid = (ptxr.y > bl.y) & (ptxr.y < tr.y) & (d_tx_right > 0.0) & (d_tx_right < self.length)
+        tyb_valid = (ptyb.x > bl.x) & (ptyb.x < tr.x) & (d_ty_bot > 0.0) & (d_ty_bot < self.length)
+        tyt_valid = (ptyt.x > bl.x) & (ptyt.x < tr.x) & (d_ty_top > 0.0) & (d_ty_top < self.length)
+
+        intersection_count = dr.select(txr_valid, 1.0, 0.0)
+        intersection_count += dr.select(txl_valid, 1.0, 0.0)
+        intersection_count += dr.select(tyb_valid, 1.0, 0.0)
+        intersection_count += dr.select(tyt_valid, 1.0, 0.0)
+
+        distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        distance_min = dr.select(tyb_valid & (d_ty_bot < distance_min), d_ty_bot, distance_min)
+        distance_min = dr.select(tyt_valid & (d_ty_top < distance_min), d_ty_top, distance_min)
+
+        distance_max = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_left, d_tx_right), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        distance_max = dr.select(tyb_valid & (d_ty_bot > distance_max), d_ty_bot, distance_max)
+        distance_max = dr.select(tyt_valid & (d_ty_top > distance_max), d_ty_top, distance_max)
+
+        distance = distance_max - distance_min
+        distance = dr.select(intersection_count == 1.0, dr.select(inside_start, distance_min, dr.select(inside_end, self.length - distance_min, 0.0)), distance)
+
+        zero_distance = ((bl.x > self.start.x) & (bl.x > self.end.x)) | ((tr.x < self.start.x) & (tr.x < self.end.x))
+        zero_distance |= ((bl.y > self.start.y) & (bl.y > self.end.y)) | ((tr.y < self.start.y) & (tr.y < self.end.y))
+
+        distance = dr.select(zero_distance | (intersection_count == 0.0), 0.0, distance)
+        distance = dr.select(inside_end & inside_start, self.length, distance)
+
+        # print("distance", distance)
+        # print("\n")
+        return distance
+    
+
+def get_transmittance_value(distance, boundary, s1, s2, step):
+        
+    # x1 = distance
+    tr_0 = (dr.exp( - (distance + step.x) * s1)  - dr.exp( -distance * s1)) * ( - 1.0 / s1)
+    tr_0 = dr.select(distance > boundary, dr.exp(-boundary * s1), tr_0)
+
+    x2 = distance - boundary
+    tr_1 = (dr.exp( - (x2 + step.x) * s2)  - dr.exp( -x2 * s2)) * ( - 1.0 / s2)
+    trans = dr.select(distance > boundary, tr_0 * tr_1, tr_0)
+
+    cross_boundary = (distance + step.x > boundary) & (distance < boundary)
+    front_half = boundary - distance
+    back_half = step.x - front_half
+
+    tr_10 = (dr.exp( - (distance + front_half) * s1) - dr.exp(-distance * s1)) * ( - 1.0 / s1)
+    tr_11 = (dr.exp( - (back_half)  * s2) - dr.exp(-0 * s2)) * ( - 1.0 / s2) * dr.exp(-boundary * s1)
+    trans = dr.select(cross_boundary, tr_10 + tr_11, trans)
+
+    return trans
+
+def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, intensity):
+    A = FloatD(a + 1.0)
+    dr.enable_grad(A)
+    energy_plane = dr.zeros(FloatD, resolution * resolution)
+    base_line = dr.zeros(FloatD, resolution * resolution)
+    lb = mi.Vector3f(-1.0, -1.0, -1.0)
+    rt = mi.Vector3f(1.0, 1.0, 1.0)
+    rng = mi.PCG32(number_neutron)
+    albedo1 = 0.9
+    albedo2 = 0.8
+
+    direction = dr.zeros(mi.Vector3f, number_neutron)
+    origin = dr.zeros(mi.Point3f, number_neutron)
+    constant = intensity / (number_neutron)
+
+    origin.x = -1.0
+    origin.y = rng.next_float32() * 2.0 + -1.0
+    direction.x = 1.0
+    distance = - dr.log(1.0 - rng.next_float32()) / sigma_t1
+
+    attenuation = dr.exp(- sigma_t1 * distance)
+    avaliable_attenuation = dr.exp(-sigma_t1 * A)
+
+    cross_boundary = attenuation < avaliable_attenuation
+    residual_attenuation = attenuation /  avaliable_attenuation
+    up_dist = -dr.log(residual_attenuation) / sigma_t2
+    
+    distance = dr.select(cross_boundary, A, distance)
+    end_point = origin + direction * distance
+    end_point_2 = origin + direction * (A + up_dist)
+
+    distance2 = dr.norm(end_point_2 - origin)
+
+    
+    step = (rt - lb) / resolution
+    beams = Beams(origin, end_point)
+    beams2 = Beams(origin + direction * A, end_point_2)
+        
+
+    for i in range(resolution * resolution):
+        xid = i % resolution
+        yid = i // resolution
+        bl = dr.zeros(mi.Vector3f, number_neutron)
+        print("pixel:", xid, yid)
+
+        bl.x += Float(-1.0 + xid * step.x)
+        bl.y += Float(-1.0 + yid * step.y)
+        tr = bl + step
+        intersect_length = beams.intersect(bl, tr)
+        intersect_length_2 = beams2.intersect(bl, tr)
+        intersect_length_2 *= dr.select(cross_boundary, 1.0, 0.0)
+
+        one1 = dr.exp(-A * sigma_t1)
+        one1 = one1 / dr.detach(one1)
+        one2 = dr.exp(-(distance2 - A) * sigma_t2)
+        one2 = one2 / dr.detach(one2)
+        
+        dr.scatter_add(energy_plane, intersect_length * constant, i)
+        dr.scatter_add(energy_plane, intersect_length_2 * constant * one1 * one2, i)
+
+        inbox2 = dr.select(cross_boundary & beams2.end_point_in_box(bl, tr), 1.0, 0.0)
+        inbox = dr.select((~cross_boundary) & beams.end_point_in_box(bl, tr), 1.0, 0.0)
+
+        cone2 = dr.exp(-(distance2 - A) * sigma_t2) * dr.exp(-A * sigma_t1)
+        cone2 = cone2  / dr.detach(cone2)
+        print(dr.gather())
+        dr.scatter_add(base_line, inbox * constant / (sigma_t1), i)
+        dr.scatter_add(base_line, inbox2 * constant * cone2 / (sigma_t2), i)
+
+    img = energy_plane.numpy().reshape(resolution, resolution)
+
+    analytic = dr.linspace(Float, 0, resolution * resolution, resolution * resolution, False)
+    xdis = 2.0 * (analytic - dr.floor(analytic / resolution) * resolution) / resolution 
+    
+    trans = get_transmittance_value(xdis, A, sigma_t1, sigma_t2, step)
+
+    delta = 0.0001
+    trans_plus = get_transmittance_value(xdis, A+delta, sigma_t1, sigma_t2, step)
+    trans_min = get_transmittance_value(xdis, A-delta, sigma_t1, sigma_t2, step)
+    analytic_value = trans * intensity / 2.0 * step.y
+
+    gradient_fd = (trans_plus - trans_min) * intensity / 2.0 * step.y / (2.0 * delta)
+    print(analytic_value.shape)
+    
+    # Forward-propagate gradients through the computation graph  
+    # 
+    dr.forward(A)
+    fig, ax = plt.subplots(3, 2, figsize=(12, 12))
+    
+    # Fetch the image gradient values
+    base_grad_image = dr.grad(base_line)
+    grad_image = dr.grad(energy_plane)
+    
+
+    gimg = mi.Bitmap(grad_image.numpy().reshape(resolution, resolution))
+    gimgfd = mi.Bitmap(gradient_fd.numpy().reshape(resolution, resolution))
+    gimgcl = mi.Bitmap(base_grad_image.numpy().reshape(resolution, resolution))
+    gimg.write("gradients.exr")
+    gimgfd.write("gradients_fd.exr")
+    gimgcl.write("gradients_cl.exr")
+    # cosntat = mi.Bitmap((gradient_fd / grad_image).numpy().reshape(resolution, resolution))
+    # cosntat.write("ratio.exr")
+    
+    viridis = cm.get_cmap('PiYG', 256)
+    value_cmap = cm.get_cmap('hot', 256)
+    grad_plot = ax[0][0].imshow(grad_image.numpy().reshape(resolution, resolution), cmap=viridis, vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1])
+    img_plot = ax[0][1].imshow(img, cmap=value_cmap, vmin=0, vmax=0.002) 
+
+    ana_plot = ax[1][1].imshow(analytic_value.numpy().reshape(resolution, resolution), cmap=value_cmap, vmin=0, vmax=0.002, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    grad_fd_plot = ax[1][0].imshow(gradient_fd.numpy().reshape(resolution, resolution), cmap=viridis, vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1])
+
+    baseline_plot = ax[2][1].imshow(base_line.numpy().reshape(resolution, resolution), cmap=value_cmap, vmin=0, vmax=0.002, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    baseline_grad_plot = ax[2][0].imshow(base_grad_image.numpy().reshape(resolution, resolution), cmap=viridis,  vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+
+    ax[0][0].set_title(label="gradients w.r.t boundary position", 
+             fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
+             loc='center',
+             y=1.05,
+             pad=10)
+    
+    ax[0][1].set_title(label="scattering density", 
+             fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
+             loc='center',
+             y=1.05,
+             pad=10)
+    
+    fig.colorbar(grad_plot, ax=ax[0][0])
+    fig.colorbar(img_plot, ax=ax[0][1])
+    fig.colorbar(ana_plot, ax=ax[1][1])
+    fig.colorbar(grad_fd_plot, ax=ax[1][0])
+    fig.colorbar(baseline_plot, ax=ax[2][1])
+    fig.colorbar(baseline_grad_plot, ax=ax[2][0])
+    
+
+    fig.legend()
+    plt.show()
+
+tracklength_test_2D(-0.25, 1.0, 7.0, 100000, 30, 1.0)
+exit()
+
 def test1():
     # intersection tests
     scene_dict = {
@@ -783,5 +1045,7 @@ def test1():
     # visualize_intersect(its, material_spaces, num_ray)
     
 if __name__ == "__main__":
-    test1()
+    
+    test_tracklength_1D(0.7, 1.0, 1, 100, 1.0)
+    # test1()
     # test_TensorXf(3, 4)

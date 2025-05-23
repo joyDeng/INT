@@ -93,5 +93,5 @@ def render_frame(id):
     # Disconnect()
 
 if __name__ == "__main__":
-    for ii in range(30):
+    for ii in range(200):
         render_frame(ii)

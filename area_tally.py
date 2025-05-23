@@ -149,11 +149,11 @@ def load_scene_node_energy_dependent():
     # node1 = CSGNode("difference", CSGNode("union", shape2, shape1), shape0)
 
     scm = SceneMaterial([node1, node2], [[1.0, 1.0], [1.0, 1.0]], [[0.95, 0.95], [0.95, 0.95]], 3, 2)
-    scm.set_material_sigma(TensorXf([[1.0, 5.0], [1.0, 1.0]]))
+    scm.set_material_sigma(TensorXf([[1.0, 5.0], [1.0, 2.0]]))
     scm.set_material_ald(TensorXf([[0.95, 0.95], [0.95, 0.95]]))
     phase_function = TensorXf([
         [[0.1, 0.9], [0.1, 0.9]],
-        [[0.9, 0.1], [0.9, 0.1]]
+        [[0.5, 0.5], [0.5, 0.5]]
     ])
     
     scm.set_phase_function(phase_function)
@@ -223,12 +223,14 @@ def sample_next_energy_group(rng, cdfs, num_energy):
     #     else:
     #         phase_energy_pdf = cdfs[:, i] - cdfs[:, i-1]
     num_ray_idx = dr.arange(UInt, dr.width(rng))
-    # num_energy_dr = UInt(num_energy)
+    
     pos = dr.binary_search(0, num_energy, lambda index: dr.gather(Float, cdfs.array, num_ray_idx * num_energy + index) < sample1)
+    dr.eval(pos)
     value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos)
     pre_value = dr.gather(Float, cdfs.array, num_ray_idx * num_energy + pos-1)
     
     group_idx = UInt(pos)
+    dr.make_opaque(group_idx)
     return group_idx, value - pre_value
 # , pre_value - value
 
@@ -1238,7 +1240,7 @@ def render_nuetron_in_csg_shape(scene, rng, scm, vertices_list, faces_list, ray_
     radiance = dr.zeros(FloatD, dr.width(ray_current)) + 1.0
     active = True
     energy_group_idx = dr.zeros(UInt64, dr.width(ray_current)) # from energy group idx 0 to n, the energy goes from high to low
-
+    dr.make_opaque(energy_group_idx)
     bounceIdx = 0
     while bounceIdx < MAX_BOUNCE:
         # get a list of intersection alone the ray
