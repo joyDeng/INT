@@ -777,7 +777,7 @@ class Beams():
         # print("length", self.length)
         
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y)
-        inside_end = (bl.x <= self.end.x) & (tr.x >= self.end.x) & (bl.y <= self.end.y) & (tr.y >= self.end.y)
+        inside_end = (bl.x < self.end.x) & (tr.x >= self.end.x) & (bl.y < self.end.y) & (tr.y >= self.end.y)
 
         dir = self.end - self.start
         dir = dir / dr.norm(dir)
@@ -846,7 +846,9 @@ def get_transmittance_value(distance, boundary, s1, s2, step):
 
 def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, intensity):
     A = FloatD(a + 1.0)
+    B = FloatD(a + 1.0)
     dr.enable_grad(A)
+    dr.enable_grad(B)
     energy_plane = dr.zeros(FloatD, resolution * resolution)
     base_line = dr.zeros(FloatD, resolution * resolution)
     lb = mi.Vector3f(-1.0, -1.0, -1.0)
@@ -873,7 +875,7 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     
     distance = dr.select(cross_boundary, A, distance)
     end_point = origin + direction * distance
-    end_point_2 = origin + direction * (A + up_dist)
+    end_point_2 = dr.detach(origin + direction * (A + up_dist))
 
     distance2 = dr.norm(end_point_2 - origin)
 
@@ -881,6 +883,8 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     step = (rt - lb) / resolution
     beams = Beams(origin, end_point)
     beams2 = Beams(origin + direction * A, end_point_2)
+
+    voxel_volume = step.x * step.y
         
 
     for i in range(resolution * resolution):
@@ -896,22 +900,51 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
         intersect_length_2 = beams2.intersect(bl, tr)
         intersect_length_2 *= dr.select(cross_boundary, 1.0, 0.0)
 
-        one1 = dr.exp(-A * sigma_t1)
+        # one1 =dr.exp(-sigma_t1 * A)
+        # one1 = one1 / dr.detach(one1)
+        # one2 =dr.exp(-sigma_t2 * (distance2 - A))
+        # one2 = one2 / dr.detach(one2)
+        # one2 = dr.select(cross_boundary, one2, 1.0)
+        # one1 = dr.select(cross_boundary, one1, 1.0)
+        one1 = dr.exp( A * (sigma_t2 - sigma_t1))
         one1 = one1 / dr.detach(one1)
-        one2 = dr.exp(-(distance2 - A) * sigma_t2)
-        one2 = one2 / dr.detach(one2)
-        
-        dr.scatter_add(energy_plane, intersect_length * constant, i)
-        dr.scatter_add(energy_plane, intersect_length_2 * constant * one1 * one2, i)
+        # one1 = 1.0
+
+        cone2 = dr.exp( B * (sigma_t2 - sigma_t1))
+        cone2 = cone2 / dr.detach(cone2)
+
+        dr.scatter_add(energy_plane, intersect_length * constant / voxel_volume, i)
+        dr.scatter_add(energy_plane, intersect_length_2 * constant * one1  / voxel_volume, i)
 
         inbox2 = dr.select(cross_boundary & beams2.end_point_in_box(bl, tr), 1.0, 0.0)
         inbox = dr.select((~cross_boundary) & beams.end_point_in_box(bl, tr), 1.0, 0.0)
+        
+        dr.scatter_add(base_line, inbox * constant / (sigma_t1) / voxel_volume, i)
+        dr.scatter_add(base_line, inbox2 * constant * cone2 / (sigma_t2) / voxel_volume, i)
 
-        cone2 = dr.exp(-(distance2 - A) * sigma_t2) * dr.exp(-A * sigma_t1)
-        cone2 = cone2  / dr.detach(cone2)
-        print(dr.gather())
-        dr.scatter_add(base_line, inbox * constant / (sigma_t1), i)
-        dr.scatter_add(base_line, inbox2 * constant * cone2 / (sigma_t2), i)
+        # if i == 22:
+        #     print("length and step size", intersect_length_2, step.x)
+        #     print("inbox2", inbox2, step.x)
+        #     print("scatter add collision", inbox2 * constant * cone2 / (sigma_t2) / voxel_volume)
+        #     print("scatter add tracklength", intersect_length_2 * constant * one1  / voxel_volume)
+        #     v1 = dr.sum(inbox2 * constant * cone2 / (sigma_t2) / voxel_volume)
+        #     v2 = dr.sum(intersect_length_2 * constant * one1  / voxel_volume)
+        #     print(" collision and tracklength", v1, v2)
+        #     dr.forward(A)
+        #     gv2 = dr.grad(v2)
+        #     ana_gv2 = (sigma_t2 - sigma_t1) * v2
+            
+        #     dr.clear_grad(v2)
+        #     dr.clear_grad(v1)
+        #     dr.forward(B)
+        #     gv1 = dr.grad(v1)
+        #     ana_gv1 = (sigma_t2 - sigma_t1) * v1
+        #     print("gradients collision v.s tracklength", gv1, gv2)
+        #     print("ana gradients, collision v.s. tracklength", ana_gv1, ana_gv2)
+
+        #     # print(beams.length + beams2.length - bl.x - 1)
+        #     # print(bl.x + 1, tr.x + 1)
+        #     exit(0)
 
     img = energy_plane.numpy().reshape(resolution, resolution)
 
@@ -923,20 +956,21 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     delta = 0.0001
     trans_plus = get_transmittance_value(xdis, A+delta, sigma_t1, sigma_t2, step)
     trans_min = get_transmittance_value(xdis, A-delta, sigma_t1, sigma_t2, step)
-    analytic_value = trans * intensity / 2.0 * step.y
+    analytic_value = trans * intensity / 2.0 * step.y / voxel_volume
 
-    gradient_fd = (trans_plus - trans_min) * intensity / 2.0 * step.y / (2.0 * delta)
+    gradient_fd = (trans_plus - trans_min) * intensity / 2.0 * step.y / (2.0 * delta) / voxel_volume
     print(analytic_value.shape)
     
     # Forward-propagate gradients through the computation graph  
     # 
     dr.forward(A)
-    fig, ax = plt.subplots(3, 2, figsize=(12, 12))
-    
-    # Fetch the image gradient values
-    base_grad_image = dr.grad(base_line)
     grad_image = dr.grad(energy_plane)
     
+    # Fetch the image gradient values
+    dr.forward(B)
+    base_grad_image = dr.grad(base_line) 
+    
+    fig, ax = plt.subplots(2, 3, figsize=(11, 6))
 
     gimg = mi.Bitmap(grad_image.numpy().reshape(resolution, resolution))
     gimgfd = mi.Bitmap(gradient_fd.numpy().reshape(resolution, resolution))
@@ -949,39 +983,39 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     
     viridis = cm.get_cmap('PiYG', 256)
     value_cmap = cm.get_cmap('hot', 256)
-    grad_plot = ax[0][0].imshow(grad_image.numpy().reshape(resolution, resolution), cmap=viridis, vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1])
-    img_plot = ax[0][1].imshow(img, cmap=value_cmap, vmin=0, vmax=0.002) 
+    grad_plot = ax[1][0].imshow(grad_image.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis, extent=[-1,1,-1,1])
+    img_plot = ax[0][0].imshow(img, cmap=value_cmap, vmin = 0, vmax = 5, ) 
 
-    ana_plot = ax[1][1].imshow(analytic_value.numpy().reshape(resolution, resolution), cmap=value_cmap, vmin=0, vmax=0.002, extent=[-1,1,-1,1]) #vmin=0, vmax=1
-    grad_fd_plot = ax[1][0].imshow(gradient_fd.numpy().reshape(resolution, resolution), cmap=viridis, vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1])
+    ana_plot = ax[0][1].imshow(analytic_value.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    grad_fd_plot = ax[1][1].imshow(gradient_fd.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis, extent=[-1,1,-1,1])
 
-    baseline_plot = ax[2][1].imshow(base_line.numpy().reshape(resolution, resolution), cmap=value_cmap, vmin=0, vmax=0.002, extent=[-1,1,-1,1]) #vmin=0, vmax=1
-    baseline_grad_plot = ax[2][0].imshow(base_grad_image.numpy().reshape(resolution, resolution), cmap=viridis,  vmin=-0.0075, vmax=0.0075, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    baseline_plot = ax[0][2].imshow(base_line.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    baseline_grad_plot = ax[1][2].imshow(base_grad_image.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis,  extent=[-1,1,-1,1]) #vmin=0, vmax=1
 
-    ax[0][0].set_title(label="gradients w.r.t boundary position", 
-             fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
-             loc='center',
-             y=1.05,
-             pad=10)
+    # ax[0][0].set_title(label="gradients w.r.t boundary position", 
+    #          fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
+    #          loc='center',
+    #          y=1.05,
+    #          pad=10)
     
-    ax[0][1].set_title(label="scattering density", 
-             fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
-             loc='center',
-             y=1.05,
-             pad=10)
+    # ax[0][1].set_title(label="scattering density", 
+    #          fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
+    #          loc='center',
+    #          y=1.05,
+    #          pad=10)
     
-    fig.colorbar(grad_plot, ax=ax[0][0])
-    fig.colorbar(img_plot, ax=ax[0][1])
-    fig.colorbar(ana_plot, ax=ax[1][1])
-    fig.colorbar(grad_fd_plot, ax=ax[1][0])
-    fig.colorbar(baseline_plot, ax=ax[2][1])
-    fig.colorbar(baseline_grad_plot, ax=ax[2][0])
+    fig.colorbar(grad_plot, ax=ax[1][0])
+    fig.colorbar(img_plot, ax=ax[0][0])
+    fig.colorbar(ana_plot, ax=ax[0][1])
+    fig.colorbar(grad_fd_plot, ax=ax[1][1])
+    fig.colorbar(baseline_plot, ax=ax[0][2])
+    fig.colorbar(baseline_grad_plot, ax=ax[1][2])
     
 
     fig.legend()
     plt.show()
 
-tracklength_test_2D(-0.25, 1.0, 7.0, 100000, 30, 1.0)
+tracklength_test_2D(-0.25, 0.2, 0.7, 500000, 30, 10.0)
 exit()
 
 def test1():
