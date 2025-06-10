@@ -1,6 +1,7 @@
 *.npy
 *.txt
 *.obj
+*.exr
 Opt
 data
 *.mtl

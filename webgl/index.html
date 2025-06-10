@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <script type="text/javascript" src="js/gl-matrix-min.js"></script>
+    <script type="text/javascript" src="js/simple-rotator.js"></script>
+    <!-- <script src="webgl-demo.js" type="module"></script> -->
+    <script type="x-shader/x-vertx" id="vshader">
+        attribute vec3 coords;
+        attribute float color;
+        uniform mat4 modelview;
+        uniform mat4 projection;
+        uniform bool lit;
+        uniform vec3 normal;
+        uniform mat3 normalMatrix;
+        varying vec4 vColor;
+
+        void main() {
+            vec4 coords = vec4(coords, 1.0);
+            vec4 transformedVertex = modelview * coords;
+            gl_Position = projection * transformedVertex;
+            if (lit) {
+                vec3 unitNormal = normalize(normalMatrix * normal);
+                float multiplier = abs(unitNormal.z);
+                vColor = vec4(color, color, color, 1.0);
+            } else {
+                vColor = vec4(color);
+            }
+        }
+    </script>
+    <script type="x-shader/x-fragment" id="fshader">
+        precision mediump float;
+        varying vec4 vColor;
+        void main() {
+            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0)
+            
+        }
+    </script>
+    
+    
+    
+</head>
+
+<body>
+    <canvas id="glcanvas" width="640" height="640" style="background: red;"></canvas>
+    <div> Load File </div>
+    <input type="file" id="fileInput">
+    <div> Visualize Segment By BouncesIdx </div>
+    <input type="checkbox" id="perbounce" onclick="checkbox_bounce()">
+    <!-- <div id="fileContents"></div> -->
+    <div id="message"></div>
+    <div> Segment ID </div>
+    <div class="slidecontainer">
+        <p>Value: <span id="segment_id_value"></span></p>
+        <input type="range" min="-1" max="8" value="-1" class="slider" id="segmentID">
+    </div>
+    <!-- <script type="module">
+        const response = await fetch("file/cube.obj");  /* webglfundamentals: url */
+        const text = await response.text();
+        console.log(text);
+    </script> -->
+    <script type="text/javascript" src="js/loadfile.js"></script>
+    <script type="text/javascript" src="js/module.js"></script>
+    <script>
+        init([]);
+    </script>
+    
+</body>
+</html>

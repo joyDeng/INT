@@ -5,7 +5,7 @@ import sys
 
 # print(sys.path)
 # exit(0)
-
+import struct
 # need to change back to llvm on my mac
 import mitsuba as mi
 import drjit as dr
@@ -756,14 +756,88 @@ def test_tracklength_1D(bounce_a, sigma_t, number_neutron, resolution, length):
     plt.legend()
     plt.show()
 
+        
+
+
 class Beams():
-    def __init__(self, start, end):
+    def __init__(self, start, end, active = True, color=1.0, bounceIdx=0):
         self.start = start
         self.end = end
         self.length = dr.norm(end - start)
+        self.active = active
+        self.color = color
+        self.bounceIdx = bounceIdx
+
+    def concat(self, c):
+        self.start = dr.concat(self.start, c.start, axis=0)
+        self.end = dr.concat(self.end, c.end, axis=0)
+        self.length = dr.concat(self.length, c.length)
+        self.active = dr.concat(self.active, c.active)
+        self.color = dr.concat(self.color, c.color)
 
     def end_point_in_box(self, bl, tr):
-        return (self.end.x >= bl.x) & (self.end.x < tr.x) & (self.end.y >= bl.y) & (self.end.y < tr.y)
+        return (self.end.x >= bl.x) & (self.end.x < tr.x) & (self.end.y >= bl.y) & (self.end.y < tr.y) & self.active
+
+    def intersect3D(self, bl, tr):
+        distance = dr.zeros(Float, dr.width(self.start))
+        
+        inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y) & (bl.z <= self.start.z) & (tr.z >= self.start.z)
+        inside_end = (bl.x < self.end.x) & (tr.x >= self.end.x) & (bl.y < self.end.y) & (tr.y >= self.end.y) & (bl.z < self.end.z) & (tr.z >= self.end.z)
+
+        dir = self.end - self.start
+        dir = dir / dr.norm(dir)
+        
+        d_tx_left = (bl.x - self.start.x) / dir.x
+        d_tx_right = (tr.x - self.start.x) / dir.x
+        d_ty_bot = (bl.y - self.start.y) / dir.y
+        d_ty_top = (tr.y - self.start.y) / dir.y
+        d_tz_back = (bl.z - self.start.z) / dir.z
+        d_tz_front = (tr.z - self.start.z) / dir.z
+
+        ptxl = d_tx_left * dir + self.start
+        ptxr = d_tx_right * dir + self.start
+        ptyb = d_ty_bot * dir + self.start
+        ptyt = d_ty_bot * dir + self.start
+        ptzb = d_tz_back * dir + self.start
+        ptzf = d_tz_front * dir + self.start
+
+        txl_valid = (ptxl.y > bl.y) & (ptxl.y < tr.y) & (d_tx_left > 0.0) & (d_tx_left < self.length)
+        txr_valid = (ptxr.y > bl.y) & (ptxr.y < tr.y) & (d_tx_right > 0.0) & (d_tx_right < self.length)
+        tyb_valid = (ptyb.x > bl.x) & (ptyb.x < tr.x) & (d_ty_bot > 0.0) & (d_ty_bot < self.length)
+        tyt_valid = (ptyt.x > bl.x) & (ptyt.x < tr.x) & (d_ty_top > 0.0) & (d_ty_top < self.length)
+        tzb_valid = (ptzb.z > bl.z) & (ptzb.z < tr.z) & (d_tz_back > 0.0) & (d_tz_back < self.length)
+        tzf_valid = (ptzf.z > bl.z) & (ptzf.z < tr.z) & (d_tz_front > 0.0) & (d_tz_front < self.length)
+
+        intersection_count = dr.select(txr_valid, 1.0, 0.0)
+        intersection_count += dr.select(txl_valid, 1.0, 0.0)
+        intersection_count += dr.select(tyb_valid, 1.0, 0.0)
+        intersection_count += dr.select(tyt_valid, 1.0, 0.0)
+        intersection_count += dr.select(tzb_valid, 1.0, 0.0)
+        intersection_count += dr.select(tzf_valid, 1.0, 0.0)
+
+        distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        distance_min = dr.select(tyb_valid & (d_ty_bot < distance_min), d_ty_bot, distance_min)
+        distance_min = dr.select(tyt_valid & (d_ty_top < distance_min), d_ty_top, distance_min)
+        distance_min = dr.select(tzb_valid & (d_tz_back < distance_min), d_tz_back, distance_min)
+        distance_min = dr.select(tzf_valid & (d_tz_front < distance_min), d_tz_front, distance_min)
+
+        distance_max = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_left, d_tx_right), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        distance_max = dr.select(tyb_valid & (d_ty_bot > distance_max), d_ty_bot, distance_max)
+        distance_max = dr.select(tyt_valid & (d_ty_top > distance_max), d_ty_top, distance_max)
+        distance_max = dr.select(tzb_valid & (d_tz_back > distance_max), d_tz_back, distance_max)
+        distance_max = dr.select(tzf_valid & (d_tz_front > distance_max), d_tz_front, distance_max)
+
+        distance = distance_max - distance_min
+        distance = dr.select(intersection_count == 1.0, dr.select(inside_start, distance_min, dr.select(inside_end, self.length - distance_min, 0.0)), distance)
+
+        zero_distance = ((bl.x > self.start.x) & (bl.x > self.end.x)) | ((tr.x < self.start.x) & (tr.x < self.end.x))
+        zero_distance |= ((bl.y > self.start.y) & (bl.y > self.end.y)) | ((tr.y < self.start.y) & (tr.y < self.end.y))
+        zero_distance |= ((bl.z > self.start.z) & (bl.z > self.end.z)) | ((tr.z < self.start.z) & (tr.z < self.end.z))
+
+        distance = dr.select(zero_distance | (intersection_count == 0.0), 0.0, distance)
+        distance = dr.select(inside_end & inside_start, self.length, distance)
+        
+        return distance & self.active
 
     def intersect(self, bl, tr):
         """
@@ -771,10 +845,6 @@ class Beams():
         """
 
         distance = dr.zeros(Float, dr.width(self.start))
-
-        # print("start, end", self.start, self.end)
-        # print("bl, tr", bl, tr)
-        # print("length", self.length)
         
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y)
         inside_end = (bl.x < self.end.x) & (tr.x >= self.end.x) & (bl.y < self.end.y) & (tr.y >= self.end.y)
@@ -819,10 +889,68 @@ class Beams():
         distance = dr.select(zero_distance | (intersection_count == 0.0), 0.0, distance)
         distance = dr.select(inside_end & inside_start, self.length, distance)
 
-        # print("distance", distance)
-        # print("\n")
-        return distance
+        return distance & self.active
     
+    def getposes_color(self):
+        indices = dr.compress(self.active)
+        start = dr.gather(type(self.start), self.start, indices)
+        end = dr.gather(type(self.end), self.end, indices)
+        color_compressed = dr.gather(type(self.color), self.color, indices)
+        color_np = color_compressed.numpy()
+
+        start_np = start.numpy().transpose()
+        end_np = end.numpy().transpose()
+        points = np.concatenate([start_np, end_np], axis=1).reshape(-1)
+        return points, color_np
+        # poses = points.tolist()
+        # colors = color_np.tolist()
+
+        # with open(filename, mode) as newFile:
+        #     # newFileByteArray = bytearray(points.tolist())
+        #     newFile.write(struct.pack('i', len(poses)))
+        #     newFile.write(struct.pack('i', len(colors)))
+        #     print("number of points", len(poses), len(struct.pack('i', len(colors))))
+        #     print("number of colors", len(colors), len(struct.pack('i', len(colors))))
+            
+        #     for f in poses:
+        #         ba = bytearray(struct.pack("f", f))
+        #         newFile.write(ba)
+            
+        #     for c in colors:
+        #         ca = bytearray(struct.pack("f", c))
+        #         newFile.write(ca)
+    
+    def save_beams(self, filename, mode):
+        indices = dr.compress(self.active)
+        start = dr.gather(type(self.start), self.start, indices)
+        end = dr.gather(type(self.end), self.end, indices)
+        color_compressed = dr.gather(type(self.color), self.color, indices)
+        color_np = color_compressed.numpy()
+
+        start_np = start.numpy().transpose()
+        end_np = end.numpy().transpose()
+        points = np.concatenate([start_np, end_np], axis=1).reshape(-1)
+        poses = points.tolist()
+        colors = color_np.tolist()
+        with open(filename, mode) as newFile:
+            # newFileByteArray = bytearray(points.tolist())
+            newFile.write(struct.pack('i', len(poses)))
+            newFile.write(struct.pack('i', len(colors)))
+            newFile.write(struct.pack('i', self.bounceIdx))
+            print("number of points", len(poses), len(struct.pack('i', len(colors))))
+            print("number of colors", len(colors), len(struct.pack('i', len(colors))))
+            
+            for f in poses:
+                ba = bytearray(struct.pack("f", f))
+                newFile.write(ba)
+            
+            for c in colors:
+                ca = bytearray(struct.pack("f", c))
+                newFile.write(ca)
+
+            
+
+            
 
 def get_transmittance_value(distance, boundary, s1, s2, step):
         
@@ -843,6 +971,49 @@ def get_transmittance_value(distance, boundary, s1, s2, step):
     trans = dr.select(cross_boundary, tr_10 + tr_11, trans)
 
     return trans
+
+
+
+# def tracklength_test_3D(a, sigma_t1, sigma_t2, number_neutron, resolution, intensity):
+#     A = FloatD(a + 1.0)
+#     B = FloatD(a + 1.0)
+#     dr.enable_grad(A)
+#     dr.enable_grad(B)
+
+#     # initialization
+
+#     energy_plane = dr.zeros(FloatD, resolution * resolution)
+#     base_line = dr.zeros(FloatD, resolution * resolution)
+#     lbb = mi.Vector3f(-1.0, -1.0, -1.0)
+#     rtf = mi.Vector3f(1.0, 1.0, 1.0)
+#     rng = mi.PCG32(number_neutron)
+#     albedo = 0.9
+#     albedo = 0.95
+
+#     direction = dr.zeros(mi.Vector3f, number_neutron)
+#     origin = dr.zeros(mi.Point3f, number_neutron)
+#     constant = intensity / number_neutron
+
+#     origin.z = rng.next_float32() * 2.0 - 1.0
+
+#     cur_sig = sigma_t1
+#     max_bounce = 2
+#     beams = []
+#     for i in range(max_bounce):
+#         distance = - dr.log(1.0 - rng.next_float32()) / cur_sig
+#         distance2boundary = distance2boundary(origin, direction, a)
+        
+#         scatter_in_current_medium = (distance2boundary > distance)
+#         distance_cur = dr.select(scatter_in_current_medium, distance, distance2boundary)
+#         beams.append(Beams(origin, origin + direction * distance_cur))
+
+
+
+
+
+
+
+
 
 def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, intensity):
     A = FloatD(a + 1.0)
@@ -922,30 +1093,6 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
         dr.scatter_add(base_line, inbox * constant / (sigma_t1) / voxel_volume, i)
         dr.scatter_add(base_line, inbox2 * constant * cone2 / (sigma_t2) / voxel_volume, i)
 
-        # if i == 22:
-        #     print("length and step size", intersect_length_2, step.x)
-        #     print("inbox2", inbox2, step.x)
-        #     print("scatter add collision", inbox2 * constant * cone2 / (sigma_t2) / voxel_volume)
-        #     print("scatter add tracklength", intersect_length_2 * constant * one1  / voxel_volume)
-        #     v1 = dr.sum(inbox2 * constant * cone2 / (sigma_t2) / voxel_volume)
-        #     v2 = dr.sum(intersect_length_2 * constant * one1  / voxel_volume)
-        #     print(" collision and tracklength", v1, v2)
-        #     dr.forward(A)
-        #     gv2 = dr.grad(v2)
-        #     ana_gv2 = (sigma_t2 - sigma_t1) * v2
-            
-        #     dr.clear_grad(v2)
-        #     dr.clear_grad(v1)
-        #     dr.forward(B)
-        #     gv1 = dr.grad(v1)
-        #     ana_gv1 = (sigma_t2 - sigma_t1) * v1
-        #     print("gradients collision v.s tracklength", gv1, gv2)
-        #     print("ana gradients, collision v.s. tracklength", ana_gv1, ana_gv2)
-
-        #     # print(beams.length + beams2.length - bl.x - 1)
-        #     # print(bl.x + 1, tr.x + 1)
-        #     exit(0)
-
     img = energy_plane.numpy().reshape(resolution, resolution)
 
     analytic = dr.linspace(Float, 0, resolution * resolution, resolution * resolution, False)
@@ -1015,8 +1162,7 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     fig.legend()
     plt.show()
 
-tracklength_test_2D(-0.25, 0.2, 0.7, 500000, 30, 10.0)
-exit()
+
 
 def test1():
     # intersection tests
@@ -1077,9 +1223,34 @@ def test1():
     # first_hit = ith_hit_from_current(its, material_spaces, num_ray, 0)
     # print(first_hit.t)
     # visualize_intersect(its, material_spaces, num_ray)
+
+def appendBeams(beams=[]):
+    beams.append(Beams(dr.zeros(mi.Vector3f, 5), dr.zeros(mi.Vector3f, 5)))
+
+def intersect_beam_3d():
+    start = dr.zeros(mi.Vector3f, 5)
+    start.x = -1.0
+    start.y = -1.0
+    start.z = -1.0
+    end = dr.zeros(mi.Vector3f, 5)
+    end.x = 0.0
+    end.y = 0.0
+    end.z = 0.0
+    beam = Beams(start, end)
+
+    beams = []
+    appendBeams(beams)
+    print(beams)
+
+    # blb = mi.Vector3f(-1.0, -1.0, -1.0)
+    # trf = mi.Vector3f(1.0, 1.0, 1.0)
+    # print(beam.intersect3D(blb, trf))
+
+
     
 if __name__ == "__main__":
-    
-    test_tracklength_1D(0.7, 1.0, 1, 100, 1.0)
+    #intersect_beam_3d()
+    tracklength_test_2D(-0.25, 0.1, 10, 500000, 30, 10.0)
+    # test_tracklength_1D(0.7, 1.0, 1, 100, 1.0)
     # test1()
     # test_TensorXf(3, 4)

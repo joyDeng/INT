@@ -202,4 +202,29 @@ def render_geo(scenefile, iters):
         mi.util.write_bitmap(CURRENT_TEMP_DIR + "geo_iter{:02d}.png".format(i), image)
         del objs
         
-presentationPlot()
+
+def visualize_voxel(file):
+    data = np.load(file)
+    # print(voxel)
+
+    from mayavi import mlab
+
+    # Create a 3D NumPy array
+    # data = np.random.random((10, 10, 10))
+
+    # Visualize the 3D array as a volume
+    mlab.pipeline.volume(mlab.pipeline.scalar_field(data))
+    mlab.show()
+
+    # fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    # axes[0].imshow(data[:, :, 5], cmap='viridis')  # Slice along Z-axis
+    # axes[1].imshow(data[:, 5, :], cmap='viridis')  # Slice along Y-axis
+    # axes[2].imshow(data[5, :, :], cmap='viridis')  # Slice along X-axis
+
+    # plt.tight_layout()
+    # plt.show()
+
+
+if __name__ == "__main__":
+    # presentationPlot()
+    visualize_voxel("voxel_volume.npy")
