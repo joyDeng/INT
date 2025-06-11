@@ -425,4 +425,4 @@ if __name__ == "__main__":
     # test_gradient_multi_1d(0, 200000)
     # test_2cubes(400000)
     # test_hemisphere_range()
-    test_track_length(1000, 0.1)
+    test_track_length(10000, 0.1)
