@@ -1,8 +1,11 @@
-document.getElementById('fileInput').addEventListener('change', function (event){
+document.getElementById('BeamInput').addEventListener('change', function (event){
             let file = event.target.files[0];
             let reader = new FileReader();
 
             reader.onload = function (event) {
+                loaded_data = [];
+                bounce_ids = [];
+                loaded_color = [];
                 let arrayBuffer = event.target.result;
                 // let array = new Uint8Array(arrayBuffer);
                 iterate = 0
@@ -52,7 +55,30 @@ document.getElementById('fileInput').addEventListener('change', function (event)
             reader.readAsArrayBuffer(file);
 });
 
+document.getElementById('VoxelInput').addEventListener('change', function (event){
+    let file = event.target.files[0];
+    let reader = new FileReader();
 
+    reader.onload = function (event) {
+        let arrayBuffer = event.target.result;
+        
+        iterate = 0;
+        // console.log("iterate " + iterate);
+        vResolution = new Uint32Array(arrayBuffer.slice(iterate, iterate + 12));
+        // console.log("vResoltion " + vResolution);
+        vStepSize = new Float32Array(arrayBuffer.slice(iterate+12, iterate + 24));
+        // console.log("vSteps  " + vStepSize);
+        vBBox = new Float32Array(arrayBuffer.slice(iterate+24, iterate + 48))
+        // console.log("vBBox " + vBBox);
+
+        var number_elements = vResolution[0] * vResolution[1] * vResolution[2];
+
+        energyVoxels = new Float32Array(arrayBuffer.slice(iterate + 48, iterate + 48 + number_elements * 4));
+        draw();
+    };
+
+    reader.readAsArrayBuffer(file);
+});
 
 // document.getElementById('slidecontainer').addEventListener('change', function (event){
 //         segment_id = slider.value;

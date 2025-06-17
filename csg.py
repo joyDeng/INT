@@ -949,6 +949,33 @@ class Beams():
                 newFile.write(ca)
 
             
+def save_grid_data(voxel, resolution, boundingbox, filename, mode):
+    stepsize = ((boundingbox[1] - boundingbox[0]) / resolution)[0]
+    # print(stepsize)
+    # exit(0)
+    print(resolution)
+    reso = resolution.numpy().reshape(-1)
+    print(reso)
+
+    with open(filename, mode) as newFile:
+        # shapes = voxel.shape
+        newFile.write(struct.pack('i', reso[0]))
+        newFile.write(struct.pack('i', reso[1]))
+        newFile.write(struct.pack('i', reso[2]))
+        for i in range(3):
+            newFile.write(struct.pack('f', stepsize[i]))
+
+        for i in range(3):
+            newFile.write(struct.pack('f', boundingbox[0].numpy()[i]))
+
+        for i in range(3):
+            newFile.write(struct.pack('f', boundingbox[1].numpy()[i]))
+        
+        # values = voxel.reshape(-1)
+        energies = voxel.tolist()
+        for energy in energies:
+            ba = bytearray(struct.pack('f', energy))
+            newFile.write(ba)
 
             
 

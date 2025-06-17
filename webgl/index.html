@@ -9,6 +9,8 @@
     <script type="x-shader/x-vertx" id="vshader">
         attribute vec3 coords;
         attribute float color;
+        attribute vec2 a_texcoord;
+
         uniform mat4 modelview;
         uniform mat4 projection;
         uniform float intensity;
@@ -27,7 +29,49 @@
         varying vec4 vColor;
         void main() {
             gl_FragColor = vColor;
-            
+        }
+    </script>
+
+    <script type="x-shader/x-vertx" id="vsliceshader">#version 300 es
+        in vec3 coords;
+        in vec2 a_texcoord;
+
+        uniform mat4 modelview;
+        uniform mat4 projection;
+        // uniform float intensity;
+
+        out vec2 v_texcoord;
+        // varying float brightness;
+
+        void main() {
+            vec4 coords = vec4(coords, 1.0);
+            vec4 transformedVertex = modelview * coords;
+            gl_Position = projection * transformedVertex;
+            v_texcoord = a_texcoord;
+        }
+    </script>
+    <script type="x-shader/x-fragment" id="fsliceshader">#version 300 es
+        precision highp float;
+        precision highp sampler3D;
+        uniform sampler3D u_texture;
+        uniform float slice_pos;
+        uniform int slice_coord;
+
+        in vec2 v_texcoord;
+        out vec4 fragColor;
+                
+        void main() {
+            vec4 color;
+            if(slice_coord == 0){
+                color = texture(u_texture, vec3(slice_pos, v_texcoord));
+            }else if(slice_coord == 1){
+                color = texture(u_texture, vec3(v_texcoord[0], slice_pos, v_texcoord[1]));
+            }else if(slice_coord == 2){
+                color = texture(u_texture, vec3(v_texcoord, slice_pos));
+            }else{
+                color = vec4(0.0, 1.0, 0.0, 1.0);
+            }
+            fragColor = vec4(color[0], color[1], color[2], 1.0);
         }
     </script>
     
@@ -37,26 +81,36 @@
 
 <body>
     <canvas id="glcanvas" width="640" height="640" style="background: red;"></canvas>
-    <div> Load File </div>
-    <input type="file" id="fileInput">
+    <div> Visualize Beam </div>
+    <input type="checkbox" id="drawbeam" onclick="checkbox_drawbeam()">
+    <div> Load Beam File </div>
+    <input type="file" id="BeamInput">
     <div> Visualize Segment By BouncesIdx </div>
     <input type="checkbox" id="perbounce" onclick="checkbox_bounce()">
-    <!-- <div id="fileContents"></div> -->
-    <div id="message"></div>
     <div class="slidecontainer">
         <p>Segment ID, Value: <span id="segment_id_value"></span></p>
         <input type="range" min="-1" max="8" value="-1" class="slider" id="segmentID">
     </div>
-
     <div class="IntensityContainer">
         <p>Source Intensity, Value: <span id="intensity_value_text"></span></p>
-        <input type="range" min="1" max="1000" value="-1" class="slider" id="intensityValue">
+        <input type="range" min="1" max="100000" value="-1" class="slider" id="intensityValue">
     </div>
-    <!-- <script type="module">
-        const response = await fetch("file/cube.obj");  /* webglfundamentals: url */
-        const text = await response.text();
-        console.log(text);
-    </script> -->
+
+    <div> Visualize Slice </div>
+    <input type="checkbox" id="drawslice" onclick="checkbox_drawslice()">
+    <div id="message"></div>
+    <div> Load Voxel File </div>
+    <input type="file" id="VoxelInput">
+    <div class="slidecontainer">
+        <p>XYZ, Value: <span id="slice_coordinate_text"></span></p>
+        <input type="range" min="0" max="2" value="0" class="slider" id="slice_coordinate">
+    </div>
+    <div class="slidecontainer">
+        <p>Slice Position: <span id="slice_position_text"></span></p>
+        <input type="range" min="0" max="100" value="50" class="slider" id="slice_position">
+    </div>
+
+  
     <script type="text/javascript" src="js/loadfile.js"></script>
     <script type="text/javascript" src="js/module.js"></script>
     <script>

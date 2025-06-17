@@ -1204,6 +1204,49 @@ def release_intersect(its_list):
     for it in its_list:
         del it
 
+def get_voxel(startpoint, lbb, steps, resolution):
+    xyz_id = dr.floor((startpoint - lbb) / steps)
+    lb = (xyz_id) * steps + lbb
+    rt = (xyz_id + 1) * steps + lbb
+    vid = xyz_id.x * resolution.z * resolution.y + xyz_id.y * resolution.y + xyz_id.z
+    # vid = xyz_id.x * resolution.z * resolution.y + xyz_id.y * resolution.y + xyz_id.z
+    return vid, lb, rt
+
+
+def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
+    lbb = boundingbox[0]
+    rtf = boundingbox[1]
+    stepsizes = (rtf - lbb) / resolution
+    all_voxel = (resolution.x * resolution.y * resolution.z)[0]
+
+    voxels = dr.zeros(FloatD, all_voxel)
+    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)[0]
+
+    m = resolution.x * resolution.x + resolution.y * resolution.y + resolution.z * resolution.z
+    
+    max_grid = mi.Int(dr.ceil(dr.sqrt(mi.Float(m)))).numpy()[0]
+    # dr.make_opaque(max_grid)
+
+    for beams in beam_list:
+        total_length = beams.length
+        start_point = beams.start
+        direction = (beams.end - beams.start) / dr.norm(beams.end - beams.start)
+        
+        for v in range(max_grid):
+            print("v", v)
+            valid_beams = (total_length > 0.0) & beams.active
+            vid, lb, rt = get_voxel(start_point, lbb, stepsizes, resolution)
+            dist_in_voxel = beams.intersect3D(lb, rt)
+            
+            contribution = dr.select(valid_beams, dist_in_voxel / voxel_volume, 0.0)
+            dr.scatter_add(voxels, contribution, vid)
+
+            start_point += dist_in_voxel * direction
+            total_length -= dist_in_voxel
+
+    return voxels
+
+
 def accumulate_photon_beams(beams, resolution, lbb, rtf):
     """
     Return tensor of average energy in a voxel, this is the second pass of track-length estimator 

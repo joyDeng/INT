@@ -1,4 +1,5 @@
 from area_tally import *
+from csg import save_grid_data
 
 def simulate_neutron_in_csg_shape(scene, scm, seed, Va, AD=False):
     # print("random seed", seed)
@@ -406,16 +407,19 @@ def test_track_length(num_neutrons, theta):
     Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True, beam_list) 
 
     
-    for b in beam_list:    
+    # for b in beam_list:    
         # if b == beam_list[0]:
-        b.save_beams("01_vertices.npy", 'ab')
+        # b.save_beams("02_vertices.npy", 'ab')
     # print(len(beam_list))
-
-    # spatial_distribution = accumulate_photon_beams(beam_list, mi.Vector3i(25, 25, 25), mi.Vector3f(-2.0, -2.0, -2.0), mi.Vector3f(2.0, 2.0, 2.0))
+    resolution = mi.Vector3i(50, 50, 50)
+    boundingbox = [mi.Vector3f(-2.0, -2.0, -2.0), mi.Vector3f(2.0, 2.0, 2.0)]
+    spatial_distribution = accumulate_photon_beams_faster(beam_list, resolution, boundingbox)
 
     # print(spatial_distribution)
     
-    # voxels_array = spatial_distribution.numpy().reshape(25, 25, 25)
+    voxels_array = spatial_distribution.numpy()
+    save_grid_data(voxels_array, resolution, boundingbox, "00_voxel_array.npy", 'wb')
+    # print(np.sum(voxels_array))
     # np.save("voxel_volume.npy", voxels_array)
 
     # exit(0)
@@ -425,4 +429,4 @@ if __name__ == "__main__":
     # test_gradient_multi_1d(0, 200000)
     # test_2cubes(400000)
     # test_hemisphere_range()
-    test_track_length(10000, 0.1)
+    test_track_length(100000, 0.1)
