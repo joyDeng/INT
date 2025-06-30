@@ -80,35 +80,60 @@
 </head>
 
 <body>
-    <canvas id="glcanvas" width="640" height="640" style="background: red;"></canvas>
-    <div> Visualize Beam </div>
-    <input type="checkbox" id="drawbeam" onclick="checkbox_drawbeam()">
-    <div> Load Beam File </div>
-    <input type="file" id="BeamInput">
-    <div> Visualize Segment By BouncesIdx </div>
-    <input type="checkbox" id="perbounce" onclick="checkbox_bounce()">
-    <div class="slidecontainer">
-        <p>Segment ID, Value: <span id="segment_id_value"></span></p>
-        <input type="range" min="-1" max="8" value="-1" class="slider" id="segmentID">
-    </div>
-    <div class="IntensityContainer">
-        <p>Source Intensity, Value: <span id="intensity_value_text"></span></p>
-        <input type="range" min="1" max="100000" value="-1" class="slider" id="intensityValue">
-    </div>
-
-    <div> Visualize Slice </div>
-    <input type="checkbox" id="drawslice" onclick="checkbox_drawslice()">
-    <div id="message"></div>
-    <div> Load Voxel File </div>
-    <input type="file" id="VoxelInput">
-    <div class="slidecontainer">
-        <p>XYZ, Value: <span id="slice_coordinate_text"></span></p>
-        <input type="range" min="0" max="2" value="0" class="slider" id="slice_coordinate">
-    </div>
-    <div class="slidecontainer">
-        <p>Slice Position: <span id="slice_position_text"></span></p>
-        <input type="range" min="0" max="100" value="50" class="slider" id="slice_position">
-    </div>
+    <table>
+        <tr>
+            <th>Canvas</th>
+            <th>Controls</th>
+        </tr>
+        <tr>
+            <td>
+                <canvas id="glcanvas" width="640" height="640" style="background: red;"></canvas>
+            </td>
+            <td>
+                <hr/>
+                <div style="font-size: 20px;"> Visualize Beam 
+                    <input type="checkbox" id="drawbeam" onclick="checkbox_drawbeam()">
+                </div>
+                
+                <div> Load Beam File: <input type="file" id="BeamInput"></div>
+                <div> Visualize Segment By BouncesIdx 
+                    <input type="checkbox" id="perbounce" onclick="checkbox_bounce()">
+                </div>
+                
+                <div class="slidecontainer">
+                    <p>Segment ID, Value: <span id="segment_id_value"></span></p>
+                    <input type="range" min="-1" max="8" value="-1" class="slider" id="segmentID">
+                </div>
+                <div class="IntensityContainer">
+                    <p>Source Intensity, Value: <span id="intensity_value_text"></span></p>
+                    <input type="range" step="1" min="200" max="10000" value="500" class="slider" id="intensityValue">
+                </div>
+                
+                <hr/>
+                <div style="font-size: 20px;"> Visualize Slice 
+                    <input type="checkbox" id="drawslice" onclick="checkbox_drawslice()">
+                </div>
+                
+                <div id="message"></div>
+                <div> Load Voxel File: <input type="file" id="VoxelInput"> </div>
+                
+                <div class="slidecontainer">
+                    <p>XYZ, Value: <span id="slice_coordinate_text"></span></p>
+                    <input type="range" min="0" max="2" value="0" class="slider" id="slice_coordinate">
+                </div>
+                <div class="slidecontainer">
+                    <p>Slice Position: <span id="slice_position_text"></span></p>
+                    <input type="range" min="0" max="100" value="50" class="slider" id="slice_position">
+                </div>
+                <div class="slidecontainer">
+                    <p>Slice Intensity: <span id="slice_intensity_text"></span></p>
+                    <input type="range" min="1" max="1000" value="10" step="1" class="slider" id="slice_intensity">
+                </div>
+            </td>
+        </tr>
+    </table>
+    
+    
 
   
     <script type="text/javascript" src="js/loadfile.js"></script>

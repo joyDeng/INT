@@ -30,6 +30,8 @@ var slice_coord_slider = document.getElementById("slice_coordinate");
 var slice_pos_slider = document.getElementById("slice_position");
 var slice_coord_slider_text = document.getElementById("slice_coordinate_text");
 var slice_pos_slider_text = document.getElementById("slice_position_text");
+var slice_intensity_slider = document.getElementById("slice_intensity");
+var slice_intensity_text = document.getElementById("slice_intensity_text");
 
 var segment_id = -1;
 var source_intensity  = 10;
@@ -60,25 +62,32 @@ slider.oninput = function() {
   }
 
 intensity_slider.oninput = function() {
-    source_intensity = this.value;
-    intensity_slider_text.innerHTML = this.value;
+    var p = this.value;
+    source_intensity = p;
+    intensity_slider_text.innerHTML = source_intensity;
     draw();
 }
 
 slice_coord_slider.oninput = function() {
     sliceInt = this.value;
     slice_coord_slider_text.innerHTML = sliceInt;
-    console.log("this value", this.value);
-    console.log(sliceInt);
+    //console.log("this value", this.value);
+    //console.log(sliceInt);
     draw();
 }
 
 slice_pos_slider.oninput = function(){
     slicePosition = (this.value / 100.0);
     slice_pos_slider_text.innerHTML = slicePosition;
-    console.log("this value", this.value);
-    console.log(slicePosition);
+    //console.log("this value", this.value);
+    //console.log(slicePosition);
+    draw();
+}
 
+slice_intensity_slider.oninput = function(){
+    sliceIntensity = (this.value);
+    slice_intensity_text.innerHTML = sliceIntensity;
+    // console.log("this value")
     draw();
 }
 
@@ -119,7 +128,7 @@ function getVolumeSliceContent(){
 
     var newTexture = new Uint8Array(energyVoxels.length);
     for(var i = 0 ; i < energyVoxels.length ; i++){
-        newTexture[i] = Math.floor(energyVoxels[i] * 255);
+        newTexture[i] = Math.min(Math.floor(energyVoxels[i] * sliceIntensity), 255);
     }
     // console.log("range ", range);
     // console.log("slicePosition ", slicePosition);
@@ -247,10 +256,10 @@ function drawSlice(texture_data, points){
     // gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
             //   new Uint8Array([0, 0, 255, 255]));
     // console.log("drawing picture with texture", texture_data);
-    gl.texParameterf(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameterf(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); 
-    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameterf(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameterf(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    // gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); 
+    // gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, points.length/3);
 }
@@ -309,7 +318,7 @@ function draw() {
         gl.uniform1f(uSlicePosition, slicePosition);
         gl.uniform1i(uSliceCoord, sliceInt);
 
-        gl.enable(gl.DEPTH_TEST);
+        gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.CULL_FACE); 
         gl.enable(gl.BLEND);
     
@@ -350,7 +359,7 @@ function draw() {
         render_beam();
         gl.uniform1f(uIntensity, source_intensity);
 
-        gl.enable(gl.DEPTH_TEST);
+        gl.disable(gl.DEPTH_TEST);
         gl.disable(gl.CULL_FACE); 
         gl.enable(gl.BLEND);
     

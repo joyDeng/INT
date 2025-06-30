@@ -1208,14 +1208,19 @@ def get_voxel(startpoint, lbb, steps, resolution):
     xyz_id = dr.floor((startpoint - lbb) / steps)
     lb = (xyz_id) * steps + lbb
     rt = (xyz_id + 1) * steps + lbb
-    vid = xyz_id.x * resolution.z * resolution.y + xyz_id.y * resolution.y + xyz_id.z
+    # print("startpoint", startpoint)
+    # print("steps", steps)
+    # print("xyz_id", xyz_id)
+    vid = xyz_id.z * resolution.x * resolution.y + xyz_id.y * resolution.x + xyz_id.x
     # vid = xyz_id.x * resolution.z * resolution.y + xyz_id.y * resolution.y + xyz_id.z
-    return vid, lb, rt
+    outside = (xyz_id.x >= (resolution.x-1)) | (xyz_id.y >= (resolution.y-1)) | (xyz_id.z >= (resolution.z-1))
+    return vid, lb, rt, xyz_id, outside
 
 
 def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
     lbb = boundingbox[0]
     rtf = boundingbox[1]
+    
     stepsizes = (rtf - lbb) / resolution
     all_voxel = (resolution.x * resolution.y * resolution.z)[0]
 
@@ -1231,19 +1236,32 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
         total_length = beams.length
         start_point = beams.start
         direction = (beams.end - beams.start) / dr.norm(beams.end - beams.start)
-        
+        # print("beams")
         for v in range(max_grid):
-            print("v", v)
+            # print("v", v)
             valid_beams = (total_length > 0.0) & beams.active
-            vid, lb, rt = get_voxel(start_point, lbb, stepsizes, resolution)
+            vid, lb, rt, xyz_id, outside = get_voxel(start_point, lbb, stepsizes, resolution)
+            # print(xyz_id)
+            # print("xyz_id", xyz_id)
+            # print("outside", outside)
+            # print(beams.active & (~outside))
+            # print(vid)
+            # print("lower bound", lb)
+            # print("top bound", rt)
+            # exit(0)
+
             dist_in_voxel = beams.intersect3D(lb, rt)
+            # dist_in_voxel / voxel_volume
             
-            contribution = dr.select(valid_beams, dist_in_voxel / voxel_volume, 0.0)
+            contribution = dr.select((~outside) & valid_beams, dist_in_voxel / voxel_volume, 0.0)
+            # temp_voxels = dr.zeros(FloatD, all_voxel)
             dr.scatter_add(voxels, contribution, vid)
+            # voxels += temp_voxels
 
-            start_point += dist_in_voxel * direction
+            start_point += (dist_in_voxel + 0.00001) * direction
             total_length -= dist_in_voxel
-
+        # exit(0)
+        # print(voxels)
     return voxels
 
 

@@ -366,7 +366,7 @@ def test_gradient_multi_1d(seed, number_of_neutrons):
     print("Analytic              ", AdEdra, AdEdrb, AdEdrc)
     
 
-def test_track_length(num_neutrons, theta):
+def test_track_length(num_neutrons, theta, file_id):
     Offset = FloatD(theta)
     dr.enable_grad(Offset)
     scene, scm = load_scene_node_track_length_test()
@@ -407,18 +407,18 @@ def test_track_length(num_neutrons, theta):
     Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True, beam_list) 
 
     
-    # for b in beam_list:    
+    for b in beam_list:    
         # if b == beam_list[0]:
-        # b.save_beams("02_vertices.npy", 'ab')
+        b.save_beams("{:02}_vertices.npy".format(file_id), 'ab')
     # print(len(beam_list))
-    resolution = mi.Vector3i(50, 50, 50)
+    resolution = mi.Vector3i(75, 75, 75)
     boundingbox = [mi.Vector3f(-2.0, -2.0, -2.0), mi.Vector3f(2.0, 2.0, 2.0)]
     spatial_distribution = accumulate_photon_beams_faster(beam_list, resolution, boundingbox)
 
     # print(spatial_distribution)
     
-    voxels_array = spatial_distribution.numpy()
-    save_grid_data(voxels_array, resolution, boundingbox, "00_voxel_array.npy", 'wb')
+    voxels_array = spatial_distribution.numpy() / num_neutrons
+    save_grid_data(voxels_array, resolution, boundingbox, "{:02}_voxel_array.npy".format(file_id), 'wb')
     # print(np.sum(voxels_array))
     # np.save("voxel_volume.npy", voxels_array)
 
@@ -429,4 +429,4 @@ if __name__ == "__main__":
     # test_gradient_multi_1d(0, 200000)
     # test_2cubes(400000)
     # test_hemisphere_range()
-    test_track_length(100000, 0.1)
+    test_track_length(20000, 0.1, "18")
