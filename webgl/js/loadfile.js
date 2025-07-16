@@ -74,6 +74,8 @@ document.getElementById('VoxelInput').addEventListener('change', function (event
         var number_elements = vResolution[0] * vResolution[1] * vResolution[2];
 
         energyVoxels = new Float32Array(arrayBuffer.slice(iterate + 48, iterate + 48 + number_elements * 4));
+        cur_voxels = energyVoxels
+        
         draw();
     };
 

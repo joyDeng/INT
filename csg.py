@@ -760,15 +760,19 @@ def test_tracklength_1D(bounce_a, sigma_t, number_neutron, resolution, length):
 
 
 class Beams():
-    def __init__(self, start, end, active = True, color=1.0, bounceIdx=0):
-        self.start = start
+    def __init__(self, start, end, active = True, multiply = 1.0, color=1.0, bounceIdx=0):
+        self.start =  start
         self.end = end
         self.length = dr.norm(end - start)
-        self.active = active
-        self.color = color
-        self.bounceIdx = bounceIdx
+        self.active = dr.select(active, True, False)
+
+        F = dr.exp(multiply)
+        self.color = F / dr.detach(F)
+        self.bounceIdx = bounceIdx        
+
 
     def concat(self, c):
+        """this function is not in use"""
         self.start = dr.concat(self.start, c.start, axis=0)
         self.end = dr.concat(self.end, c.end, axis=0)
         self.length = dr.concat(self.length, c.length)
@@ -779,6 +783,15 @@ class Beams():
         return (self.end.x >= bl.x) & (self.end.x < tr.x) & (self.end.y >= bl.y) & (self.end.y < tr.y) & self.active
 
     def intersect3D(self, bl, tr):
+        """RETURN distance that the beam traveled in the 3D bounding box bl-tr
+
+        Parameter:  bl,bottom, left and back of the cell
+        Precondition:  vector3f, 
+
+        Parameter: tr, top, right and front of the cell
+        Precondition: vector3f
+
+        """
         distance = dr.zeros(Float, dr.width(self.start))
         
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y) & (bl.z <= self.start.z) & (tr.z >= self.start.z)
@@ -924,6 +937,8 @@ class Beams():
         indices = dr.compress(self.active)
         start = dr.gather(type(self.start), self.start, indices)
         end = dr.gather(type(self.end), self.end, indices)
+        # print("save beams, start and end", self.start, self.end)
+
         color_compressed = dr.gather(type(self.color), self.color, indices)
         color_np = color_compressed.numpy()
 
@@ -932,13 +947,16 @@ class Beams():
         points = np.concatenate([start_np, end_np], axis=1).reshape(-1)
         poses = points.tolist()
         colors = color_np.tolist()
+        # print(self.bounceIdx)
+        # print("start and end", self.start, self.end)
+        # print("active or not", self.active)
         with open(filename, mode) as newFile:
             # newFileByteArray = bytearray(points.tolist())
             newFile.write(struct.pack('i', len(poses)))
             newFile.write(struct.pack('i', len(colors)))
             newFile.write(struct.pack('i', self.bounceIdx))
-            print("number of points", len(poses), len(struct.pack('i', len(colors))))
-            print("number of colors", len(colors), len(struct.pack('i', len(colors))))
+            print("number of float in points", len(poses), len(struct.pack('i', len(poses))))
+            print("number of float in colors", len(colors), len(struct.pack('i', len(colors))))
             
             for f in poses:
                 ba = bytearray(struct.pack("f", f))

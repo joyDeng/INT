@@ -12,6 +12,8 @@ var uModelview;     // Location of the modelview uniform matrix in the shader pr
 var uIntensity;
 var uSlicePosition;
 var uSliceCoord;
+var uPositive;
+var slice_texture;
 
 var projection = mat4.create(); // projection matrix
 var modelview = mat4.create(); // modelview matrix
@@ -33,6 +35,8 @@ var slice_pos_slider_text = document.getElementById("slice_position_text");
 var slice_intensity_slider = document.getElementById("slice_intensity");
 var slice_intensity_text = document.getElementById("slice_intensity_text");
 
+
+
 var segment_id = -1;
 var source_intensity  = 10;
 var perBounce = false;
@@ -40,18 +44,41 @@ var perBounce = false;
 var drawVoxel = false;
 var drawBeam = true;
 var energyVoxels;
+var fd_gradient_voxels;
+var ad_gradient_voxels;
+var cur_voxels;
 var vResolution;
 var vStepSize;
 var vBBox;
 var sliceInt = 0; // slices of x, y, or z; use 0, 1, 2 to represent it.
 var slicePosition = 0.5; // position of the slice
 var slice_position_unormalized;
+var sliceIntensity = 1.0;
 
 var beam_prog;
 var slice_prog;
 
 slider_text.innerHTML = segment_id;
 intensity_slider_text.innerHTML = source_intensity;
+
+function onclick_mark_fd(){
+    fd_gradient_voxels = new Float32Array(energyVoxels);
+}
+
+function onclick_mark_ad(){
+    ad_gradient_voxels = new Float32Array(energyVoxels);
+}
+
+function onclick_show_ad(){
+    cur_voxels = ad_gradient_voxels;
+    draw();
+}
+
+function onclick_show_fd(){
+    cur_voxels = fd_gradient_voxels;
+    draw();
+
+}
 
 slider.oninput = function() {
     // console.log(this.value)
@@ -71,16 +98,12 @@ intensity_slider.oninput = function() {
 slice_coord_slider.oninput = function() {
     sliceInt = this.value;
     slice_coord_slider_text.innerHTML = sliceInt;
-    //console.log("this value", this.value);
-    //console.log(sliceInt);
     draw();
 }
 
 slice_pos_slider.oninput = function(){
     slicePosition = (this.value / 100.0);
     slice_pos_slider_text.innerHTML = slicePosition;
-    //console.log("this value", this.value);
-    //console.log(slicePosition);
     draw();
 }
 
@@ -121,14 +144,22 @@ function getSlice_vertices_position(){
     }
 }
 
-function getVolumeSliceContent(){
-    console.log("vBBox", vBBox);
+function getVolumeSliceContent(voxels){
+    // console.log("vBBox", vBBox);
     var range = new Float32Array([vBBox[3] - vBBox[0], vBBox[4] - vBBox[1], vBBox[5]- vBBox[2]]);
     slice_position_unormalized = range[sliceInt] * slicePosition;
-
-    var newTexture = new Uint8Array(energyVoxels.length);
-    for(var i = 0 ; i < energyVoxels.length ; i++){
-        newTexture[i] = Math.min(Math.floor(energyVoxels[i] * sliceIntensity), 255);
+    var newTexture = new Uint8Array(voxels.length * 3);
+    for(var i = 0 ; i < voxels.length ; i++){
+        if (voxels[i] > 0.0){
+            newTexture[i * 3] = 0.0;
+            newTexture[i * 3 + 1] = Math.min(Math.floor(voxels[i] * sliceIntensity), 255);
+            newTexture[i * 3 + 2] = 0.0;
+        }else{
+            newTexture[i * 3] = Math.min(Math.floor(Math.abs(voxels[i]) * sliceIntensity), 255);
+            newTexture[i * 3 + 1] = 0.0;
+            newTexture[i * 3 + 2] = 0.0;
+        }
+        
     }
     // console.log("range ", range);
     // console.log("slicePosition ", slicePosition);
@@ -251,8 +282,8 @@ function drawSlice(texture_data, points){
 
     console.log("w x h", texture_data.width, texture_data.height);
 
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.LUMINANCE, texture_data.width, texture_data.height, texture_data.depth, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, texture_data.data);
-    gl.generateMipmap(gl.TEXTURE_3D);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB8, texture_data.width, texture_data.height, texture_data.depth, 0, gl.RGB, gl.UNSIGNED_BYTE, texture_data.data);
+    // gl.generateMipmap(gl.TEXTURE_3D);
     // gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
             //   new Uint8Array([0, 0, 255, 255]));
     // console.log("drawing picture with texture", texture_data);
@@ -299,6 +330,7 @@ function render_slice(){
     texcoordLocation = gl.getAttribLocation(slice_prog, "a_texcoord");
     uSlicePosition = gl.getUniformLocation(slice_prog, "slice_pos");
     uSliceCoord = gl.getUniformLocation(slice_prog, "slice_coord");
+    uPositive = gl.getUniformLocation(slice_prog, "positive_or_not");
     aTexture = gl.createTexture();
     aCoordsBuffer = gl.createBuffer();
 
@@ -343,14 +375,8 @@ function draw() {
                 ], 2, 2);
         }
         else{
-            
-            // var vertices = [-1, -1, 0,
-            //     1, -1, 0,
-            //     -1, 1, 0,
-            //     1, 1, 0,
-            //     ];
             var vertices = getSlice_vertices_position();
-            var slice_texture = getVolumeSliceContent();
+            slice_texture = getVolumeSliceContent(cur_voxels);
             drawSlice( slice_texture, vertices);
         }
     }

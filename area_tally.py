@@ -27,7 +27,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 100000
-MAX_BOUNCE = 5
+MAX_BOUNCE = 10
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -490,7 +490,6 @@ def calculate_tally_energy(tally, sheilding, cross_section_tot_t, cross_section_
     ray_current = Ray(p0, ray_init.direction)
 
     for i in range(MAX_BOUNCE):
-        
         # sample collision event
         dist = dr.detach(sample_distance(cross_section_tot_t, rng))
         intersect, r1, uv = sheilding.intersect(ray_current)
@@ -1126,7 +1125,9 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     scatter_pos = ray_pass.o
     end_pos = ray_pass.o
     nerest_hit_from_scatter_pos = dr.zeros(mi.Point3f, num_rays)
+    
     sample_active = ~tv
+    # sample_active = (sample_active == sample_active)
     numerical_mask = False
 
     attenuation_till_scatter_point = dr.ones(FloatD, num_rays)
@@ -1134,15 +1135,16 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
 
     energy_per_ray = dr.ones(FloatD, num_rays) * 1.0 / num_rays
 
-    
+    reparam_constant = dr.zeros(FloatD, num_rays)
+    last_distance = dr.zeros(FloatD, num_rays)
+    distance = dr.zeros(FloatD, num_rays)
 
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
         # recompute the intersection with the gradient attached
         cur_is_valid = intersect[1]
+        last_distance = distance
         distance, p, valid_intersect = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
         dr.eval()
-
-        
         
         numerical_mask |= dr.select(~(valid_intersect == intersect[0].is_valid()) & cur_is_valid & sample_active, True, False)
         material_idx = UInt(current_material)
@@ -1152,7 +1154,10 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         material_idx = dr.select(in_medium, material_idx, 0)
 
         # TODO: replace this 
-        cur_cross_section_tots = scm.get_sig(material_idx, energy_group_idx)
+        cross_section_query = scm.get_sig(material_idx, energy_group_idx)
+        cross_section_difference_across_boundary = cross_section_query - cur_cross_section_tots
+        cur_cross_section_tots = cross_section_query
+
         update_attenuation = dr.select(in_medium, dr.exp(-distance * cur_cross_section_tots), 1.0)
 
         # shall I check sample ray in medium or not
@@ -1172,12 +1177,13 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         
         # add sample to get spatial value TODO: add reparameterized value to it
         if bounceIdx > -1:
+            
             beam_distance = dr.select(sample_active, dr.select(stop_sample_in_current_space, update_dist, distance), 0)
-            cur_beams = Beams(dr.detach(ray.o), dr.detach(ray.o + ray.d * beam_distance), sample_active, energy_per_ray, bounceIdx)
+            reparam_constant += cross_section_difference_across_boundary * last_distance
+            cur_beams = Beams(dr.detach(ray.o), dr.detach(ray.o + ray.d * beam_distance), sample_active, reparam_constant, energy_per_ray, bounceIdx)
             beams.append(cur_beams)
 
         sample_active &= ~(stop_sample_in_current_space)
-        
         attenuation *= update_attenuation
         reparam_factor = dr.select(stop_sample_in_current_space, distance, reparam_factor)
 
@@ -1234,29 +1240,16 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
 
     for beams in beam_list:
         total_length = beams.length
-        start_point = beams.start
+        start_point = mi.Vector3f(beams.start)
         direction = (beams.end - beams.start) / dr.norm(beams.end - beams.start)
         # print("beams")
         for v in range(max_grid):
             # print("v", v)
             valid_beams = (total_length > 0.0) & beams.active
             vid, lb, rt, xyz_id, outside = get_voxel(start_point, lbb, stepsizes, resolution)
-            # print(xyz_id)
-            # print("xyz_id", xyz_id)
-            # print("outside", outside)
-            # print(beams.active & (~outside))
-            # print(vid)
-            # print("lower bound", lb)
-            # print("top bound", rt)
-            # exit(0)
-
-            dist_in_voxel = beams.intersect3D(lb, rt)
-            # dist_in_voxel / voxel_volume
-            
-            contribution = dr.select((~outside) & valid_beams, dist_in_voxel / voxel_volume, 0.0)
-            # temp_voxels = dr.zeros(FloatD, all_voxel)
+            dist_in_voxel = dr.detach(beams.intersect3D(lb, rt))
+            contribution = dr.select((~outside) & valid_beams, dist_in_voxel * beams.color / voxel_volume, 0.0)
             dr.scatter_add(voxels, contribution, vid)
-            # voxels += temp_voxels
 
             start_point += (dist_in_voxel + 0.00001) * direction
             total_length -= dist_in_voxel
@@ -1312,13 +1305,12 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
     radiance = dr.zeros(FloatD, num_neutron) + 1.0 
     
     energy_group_idx = dr.zeros(UInt, num_neutron) # from energy group idx 0 to n, the energy goes from high to low
-
-    # group_pdf = dr.ones(FloatD, dr.width(ray_current))
     active = True
 
     bounceIdx = 0
     while bounceIdx < MAX_BOUNCE:
         all_its, material_spaces = dr.detach(scene_material_intersect(scene, ray_current, scm, active))
+        
         dr.eval()
 
         attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 

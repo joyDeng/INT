@@ -71,12 +71,9 @@
             }else{
                 color = vec4(0.0, 1.0, 0.0, 1.0);
             }
-            fragColor = vec4(color[0], color[1], color[2], 1.0);
+            fragColor = vec4(color[0], color[1], color[2], 0.0);
         }
     </script>
-    
-    
-    
 </head>
 
 <body>
@@ -110,13 +107,18 @@
                 </div>
                 
                 <hr/>
-                <div style="font-size: 20px;"> Visualize Slice 
+                <div style="font-size: 20px;"> Visualize Field Slice 
                     <input type="checkbox" id="drawslice" onclick="checkbox_drawslice()">
                 </div>
                 
                 <div id="message"></div>
                 <div> Load Voxel File: <input type="file" id="VoxelInput"> </div>
-                
+                Gradients Options:
+                <button type="button" id="mark-fd" onclick="onclick_mark_fd()">save FD</button>
+                <button type="button" id="mark-ad" onclick="onclick_mark_ad()">save AD</button>
+                <button type="button" id="show-ad" onclick="onclick_show_ad()">show AD</button>
+                <button type="button" id="show-fd" onclick="onclick_show_fd()">show FD</button>
+
                 <div class="slidecontainer">
                     <p>XYZ, Value: <span id="slice_coordinate_text"></span></p>
                     <input type="range" min="0" max="2" value="0" class="slider" id="slice_coordinate">
