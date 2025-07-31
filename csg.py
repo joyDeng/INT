@@ -766,8 +766,9 @@ class Beams():
         self.length = dr.norm(end - start)
         self.active = dr.select(active, True, False)
 
-        F = dr.exp(multiply)
-        self.color = F / dr.detach(F)
+        # print("multiply: ", multiply)
+        F = dr.exp(multiply) * color
+        self.color = F / dr.detach(F) 
         self.bounceIdx = bounceIdx        
 
 
@@ -782,7 +783,7 @@ class Beams():
     def end_point_in_box(self, bl, tr):
         return (self.end.x >= bl.x) & (self.end.x < tr.x) & (self.end.y >= bl.y) & (self.end.y < tr.y) & self.active
 
-    def intersect3D(self, bl, tr):
+    def intersect3D(self, bl, tr, printout=False):
         """RETURN distance that the beam traveled in the 3D bounding box bl-tr
 
         Parameter:  bl,bottom, left and back of the cell
@@ -795,7 +796,10 @@ class Beams():
         distance = dr.zeros(Float, dr.width(self.start))
         
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y) & (bl.z <= self.start.z) & (tr.z >= self.start.z)
-        inside_end = (bl.x < self.end.x) & (tr.x >= self.end.x) & (bl.y < self.end.y) & (tr.y >= self.end.y) & (bl.z < self.end.z) & (tr.z >= self.end.z)
+        inside_end = (bl.x <= self.end.x) & (tr.x >= self.end.x) & (bl.y <= self.end.y) & (tr.y >= self.end.y) & (bl.z <= self.end.z) & (tr.z >= self.end.z)
+
+        if printout:
+            print(inside_end)
 
         dir = self.end - self.start
         dir = dir / dr.norm(dir)
@@ -810,16 +814,16 @@ class Beams():
         ptxl = d_tx_left * dir + self.start
         ptxr = d_tx_right * dir + self.start
         ptyb = d_ty_bot * dir + self.start
-        ptyt = d_ty_bot * dir + self.start
+        ptyt = d_ty_top * dir + self.start
         ptzb = d_tz_back * dir + self.start
         ptzf = d_tz_front * dir + self.start
 
-        txl_valid = (ptxl.y > bl.y) & (ptxl.y < tr.y) & (d_tx_left > 0.0) & (d_tx_left < self.length)
-        txr_valid = (ptxr.y > bl.y) & (ptxr.y < tr.y) & (d_tx_right > 0.0) & (d_tx_right < self.length)
-        tyb_valid = (ptyb.x > bl.x) & (ptyb.x < tr.x) & (d_ty_bot > 0.0) & (d_ty_bot < self.length)
-        tyt_valid = (ptyt.x > bl.x) & (ptyt.x < tr.x) & (d_ty_top > 0.0) & (d_ty_top < self.length)
-        tzb_valid = (ptzb.z > bl.z) & (ptzb.z < tr.z) & (d_tz_back > 0.0) & (d_tz_back < self.length)
-        tzf_valid = (ptzf.z > bl.z) & (ptzf.z < tr.z) & (d_tz_front > 0.0) & (d_tz_front < self.length)
+        txl_valid = (ptxl.y >= bl.y) & (ptxl.y <= tr.y) & (ptxl.z >= bl.z) & (ptxl.z <= tr.z) & (d_tx_left >= 0.0) & (d_tx_left < self.length)
+        txr_valid = (ptxr.y >= bl.y) & (ptxr.y <= tr.y) & (ptxr.z >= bl.z) & (ptxr.z <= tr.z) & (d_tx_right >= 0.0) & (d_tx_right < self.length)
+        tyb_valid = (ptyb.x >= bl.x) & (ptyb.x <= tr.x) & (ptyb.z >= bl.z) & (ptyb.z <= tr.z) & (d_ty_bot >= 0.0) & (d_ty_bot < self.length)
+        tyt_valid = (ptyt.x >= bl.x) & (ptyt.x <= tr.x) & (ptyt.z >= bl.z) & (ptyt.z <= tr.z) & (d_ty_top >= 0.0) & (d_ty_top < self.length)
+        tzb_valid = (ptzb.y >= bl.y) & (ptzb.y <= tr.y) & (ptzb.x >= bl.x) & (ptzb.x <= tr.x) & (d_tz_back >= 0.0) & (d_tz_back < self.length)
+        tzf_valid = (ptzf.y >= bl.y) & (ptzf.y <= tr.y) & (ptzf.x >= bl.x) & (ptzf.x <= tr.x) & (d_tz_front >= 0.0) & (d_tz_front < self.length)
 
         intersection_count = dr.select(txr_valid, 1.0, 0.0)
         intersection_count += dr.select(txl_valid, 1.0, 0.0)
@@ -828,13 +832,24 @@ class Beams():
         intersection_count += dr.select(tzb_valid, 1.0, 0.0)
         intersection_count += dr.select(tzf_valid, 1.0, 0.0)
 
-        distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        if printout:
+            print("intersection count", intersection_count)
+            print("intersection txl_valid", txl_valid)
+            print("txr_valid",  txr_valid)
+            print("tyb_valid", tyb_valid)
+            print("tyt_valid", tyt_valid)
+            print("tzb_valid", tzb_valid)
+            print("tzf_valid", tzf_valid)
+            print("ptyt", ptyt)
+            print("start", self.start)
+
+        distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, dr.inf)))
         distance_min = dr.select(tyb_valid & (d_ty_bot < distance_min), d_ty_bot, distance_min)
         distance_min = dr.select(tyt_valid & (d_ty_top < distance_min), d_ty_top, distance_min)
         distance_min = dr.select(tzb_valid & (d_tz_back < distance_min), d_tz_back, distance_min)
         distance_min = dr.select(tzf_valid & (d_tz_front < distance_min), d_tz_front, distance_min)
 
-        distance_max = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_left, d_tx_right), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 10.0)))
+        distance_max = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_left, d_tx_right), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, 0.0)))
         distance_max = dr.select(tyb_valid & (d_ty_bot > distance_max), d_ty_bot, distance_max)
         distance_max = dr.select(tyt_valid & (d_ty_top > distance_max), d_ty_top, distance_max)
         distance_max = dr.select(tzb_valid & (d_tz_back > distance_max), d_tz_back, distance_max)
@@ -934,20 +949,27 @@ class Beams():
         #         newFile.write(ca)
     
     def save_beams(self, filename, mode):
+        # print("save beam bounce Idx", self.bounceIdx)
         indices = dr.compress(self.active)
         start = dr.gather(type(self.start), self.start, indices)
         end = dr.gather(type(self.end), self.end, indices)
         # print("save beams, start and end", self.start, self.end)
-
+        # print("indices computed")
+        # print("indices", indices)
+        if dr.width(indices) <= 0:
+            return
+        
         color_compressed = dr.gather(type(self.color), self.color, indices)
+        
         color_np = color_compressed.numpy()
-
+        # print("color compressed")
         start_np = start.numpy().transpose()
         end_np = end.numpy().transpose()
         points = np.concatenate([start_np, end_np], axis=1).reshape(-1)
+        # print("point concatenated")
         poses = points.tolist()
         colors = color_np.tolist()
-        # print(self.bounceIdx)
+        # print("color computed")
         # print("start and end", self.start, self.end)
         # print("active or not", self.active)
         with open(filename, mode) as newFile:
@@ -955,8 +977,8 @@ class Beams():
             newFile.write(struct.pack('i', len(poses)))
             newFile.write(struct.pack('i', len(colors)))
             newFile.write(struct.pack('i', self.bounceIdx))
-            print("number of float in points", len(poses), len(struct.pack('i', len(poses))))
-            print("number of float in colors", len(colors), len(struct.pack('i', len(colors))))
+            # print("number of float in points", len(poses), len(struct.pack('i', len(poses))))
+            # print("number of float in colors", len(colors), len(struct.pack('i', len(colors))))
             
             for f in poses:
                 ba = bytearray(struct.pack("f", f))

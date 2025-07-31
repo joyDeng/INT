@@ -27,7 +27,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 100000
-MAX_BOUNCE = 10
+MAX_BOUNCE = 2
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -307,6 +307,12 @@ def test_sample_next_energy_group(num_groups, num_neutron):
 
 # test_sample_next_energy_group(2, 10)
 # exit(0)
+
+def phase_2d(next_float):
+    angle = next_float * 2.0 *  dr.pi
+    x = dr.cos(angle)
+    y = dr.sin(angle)
+    return mi.Vector3f(x, y, dr.zeros(mi.Float, dr.width(x)))
      
 
 def hg(costheta, g):
@@ -1089,7 +1095,7 @@ def sample_attenuation_along_ray(material_spaces, ray, scm, rng, energy_group):
     pdf = dr.detach(cross_section_tots * attenuation_sample)
     return attenuation_sample, pdf, through_vaccum
 
-def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng, energy_group_idx, beams=[], bounceIdx=-1):
+def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ray_pass, scm, vertices_list, faces_list, rng, energy_group_idx, beams=[], bounceIdx=-1, beam_weight=1.0):
     """
     Return: 
         the attenuation of the energy along the ray
@@ -1133,30 +1139,41 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
     attenuation_till_scatter_point = dr.ones(FloatD, num_rays)
     scatter_material_idx = dr.zeros(UInt, num_rays)
 
-    energy_per_ray = dr.ones(FloatD, num_rays) * 1.0 / num_rays
+    energy_per_ray = dr.ones(FloatD, num_rays) / num_rays
 
     reparam_constant = dr.zeros(FloatD, num_rays)
     last_distance = dr.zeros(FloatD, num_rays)
     distance = dr.zeros(FloatD, num_rays)
+    last_distance = dr.zeros(FloatD, num_rays)
+    cross_boundary_constant = dr.ones(FloatD, num_rays)
+
+    # print("material spaces", material_spaces)
 
     for intersect, current_material in zip(all_its, material_spaces[:-1]):
         # recompute the intersection with the gradient attached
         cur_is_valid = intersect[1]
-        last_distance = distance
+        
+        
         distance, p, valid_intersect = recompute_intersect_csg(scene, intersect[0], vertices_list, faces_list, ray, intersect[2], cur_is_valid)
         dr.eval()
+        # print("distance, ray.o", distance, ray.o)
         
         numerical_mask |= dr.select(~(valid_intersect == intersect[0].is_valid()) & cur_is_valid & sample_active, True, False)
         material_idx = UInt(current_material)
+        # print("current material, material idx", current_material, material_idx)
 
         # no attenuation in vaccum
         in_medium = ~ (material_idx == scm.num_material)
         material_idx = dr.select(in_medium, material_idx, 0)
+        
 
         # TODO: replace this 
-        cross_section_query = scm.get_sig(material_idx, energy_group_idx)
+        cross_section_query = dr.select(in_medium, scm.get_sig(material_idx, energy_group_idx), 0.0)
+        # print("material idx, cross_section_query", material_idx, cross_section_query)
+
         cross_section_difference_across_boundary = cross_section_query - cur_cross_section_tots
         cur_cross_section_tots = cross_section_query
+        same_material_mask = dr.select((cross_section_difference_across_boundary == 0.0) & in_medium, True, False)
 
         update_attenuation = dr.select(in_medium, dr.exp(-distance * cur_cross_section_tots), 1.0)
 
@@ -1175,17 +1192,24 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
         attenuation_till_scatter_point = dr.select(stop_sample_in_current_space, attenuation * dr.exp(-cur_cross_section_tots * dist_reparamed * distance), attenuation_till_scatter_point)
         nerest_hit_from_scatter_pos = dr.select(stop_sample_in_current_space, ray.o, nerest_hit_from_scatter_pos)
         
+        
         # add sample to get spatial value TODO: add reparameterized value to it
         if bounceIdx > -1:
-            
+            print(bounceIdx, "cross section difference", cross_section_difference_across_boundary)
             beam_distance = dr.select(sample_active, dr.select(stop_sample_in_current_space, update_dist, distance), 0)
-            reparam_constant += cross_section_difference_across_boundary * last_distance
-            cur_beams = Beams(dr.detach(ray.o), dr.detach(ray.o + ray.d * beam_distance), sample_active, reparam_constant, energy_per_ray, bounceIdx)
-            beams.append(cur_beams)
+            cross_boundary_constant = dr.select(same_material_mask, cross_boundary_constant, cross_section_difference_across_boundary * last_distance)
+            reparam_constant += dr.select(same_material_mask, 0.0, cross_boundary_constant)
+            # cos_theta = (ray.o - ray.d * beam_distance) - ray_pass.o
 
+            cur_beams = Beams(dr.detach(ray.o), dr.detach(ray.o + ray.d * beam_distance), sample_active, reparam_constant, energy_per_ray * beam_weight, bounceIdx)
+            beams.append(cur_beams) 
+            # print("beams multiplier", bounceIdx, reparam_constant)
+            # print("\n")
+            # print("bounce, start, end", bounceIdx, ray.o, ray.o + ray.d * beam_distance)
         sample_active &= ~(stop_sample_in_current_space)
         attenuation *= update_attenuation
         reparam_factor = dr.select(stop_sample_in_current_space, distance, reparam_factor)
+        last_distance = last_distance + distance
 
         # update the ray origin
         ray.o += distance * ray.d
@@ -1193,6 +1217,11 @@ def sample_and_compute_attenuation_along_ray(scene, all_its, material_spaces, ra
 
     sig_t, alb, phase = scm.get_optical_properties(UInt(scatter_material_idx), energy_group_idx)
     features = MaterialParameter(sig_t, alb, phase)
+
+    cross_boundary_constant = -cur_cross_section_tots * last_distance
+    reparam_constant += dr.select(same_material_mask, 0.0, cross_boundary_constant)
+    exit_beams = Beams(dr.detach(ray.o), dr.detach(ray.o + ray.d * 1.0), sample_active, reparam_constant, energy_per_ray, bounceIdx)
+    beams.append(exit_beams)
 
     exit_ray = sample_active
     return attenuation, reparam_factor, attenuation_till_scatter_point, pdf, scatter_pos, features, exit_ray, numerical_mask
@@ -1214,14 +1243,29 @@ def get_voxel(startpoint, lbb, steps, resolution):
     xyz_id = dr.floor((startpoint - lbb) / steps)
     lb = (xyz_id) * steps + lbb
     rt = (xyz_id + 1) * steps + lbb
-    # print("startpoint", startpoint)
-    # print("steps", steps)
-    # print("xyz_id", xyz_id)
     vid = xyz_id.z * resolution.x * resolution.y + xyz_id.y * resolution.x + xyz_id.x
-    # vid = xyz_id.x * resolution.z * resolution.y + xyz_id.y * resolution.y + xyz_id.z
-    outside = (xyz_id.x >= (resolution.x-1)) | (xyz_id.y >= (resolution.y-1)) | (xyz_id.z >= (resolution.z-1))
+    outside = (xyz_id.x > (resolution.x-1)) | (xyz_id.y > (resolution.y-1)) | (xyz_id.z > (resolution.z-1)) | (xyz_id.x < 0) | (xyz_id.y < 0) | (xyz_id.z < 0) 
     return vid, lb, rt, xyz_id, outside
 
+def get_voxel_id(xid, yid, zid, lbb, steps, resolution):
+    vid = zid * resolution.x * resolution.y + yid * resolution.x + xid
+    outside = (xid > (resolution.x-1)) | (yid > (resolution.y-1)) | (zid > (resolution.z-1)) | (xid < 0) | (yid < 0) | (zid < 0) 
+    xyzid = mi.Vector3i(xid, yid, zid)
+    lb = (xyzid) * steps + lbb
+    rt = (xyzid + 1) * steps + lbb
+    return vid, lb, rt, outside
+
+def get_yz(xid, start, direction, steps, lbb):
+    xstart1 = xid * steps.x
+    xstart2 = (xid + 1) * steps.x
+    t1 = (xstart1 - start.x) / direction.x
+    t2 = (xstart2 - start.x) / direction.x
+    valid_overlap = dr.select( (t1 > 0.0) | (t2 > 0.0), True, False)
+    yid = dr.floor((( start.y + direction.y * t1 ) - lbb.y) / steps.y)
+    zid = dr.floor((( start.z + direction.z * t1 ) - lbb.z) / steps.z)
+    return valid_overlap, yid, zid
+    
+    
 
 def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
     lbb = boundingbox[0]
@@ -1233,28 +1277,73 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
     voxels = dr.zeros(FloatD, all_voxel)
     voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)[0]
 
-    m = resolution.x * resolution.x + resolution.y * resolution.y + resolution.z * resolution.z
+    # m = dr.floor(dr.sqrt(resolution.x * resolution.x + resolution.y * resolution.y + resolution.z * resolution.z))
     
-    max_grid = mi.Int(dr.ceil(dr.sqrt(mi.Float(m)))).numpy()[0]
-    # dr.make_opaque(max_grid)
-
-    for beams in beam_list:
-        total_length = beams.length
+    # max_grid = m.numpy()[0]
+    
+    len_beam_list = len(beam_list)
+    print("length of beam", len_beam_list)
+    for bid in range(len_beam_list):
+        beams = beam_list[bid]
         start_point = mi.Vector3f(beams.start)
         direction = (beams.end - beams.start) / dr.norm(beams.end - beams.start)
-        # print("beams")
-        for v in range(max_grid):
+        xdim = resolution.x.numpy()[0]
+        for xid in range(xdim):
             # print("v", v)
-            valid_beams = (total_length > 0.0) & beams.active
-            vid, lb, rt, xyz_id, outside = get_voxel(start_point, lbb, stepsizes, resolution)
-            dist_in_voxel = dr.detach(beams.intersect3D(lb, rt))
-            contribution = dr.select((~outside) & valid_beams, dist_in_voxel * beams.color / voxel_volume, 0.0)
-            dr.scatter_add(voxels, contribution, vid)
+            cur_voxels = dr.zeros(FloatD, all_voxel)
+            # r = (beams.end - start_point) / direction
+            over_lap, yid_start, zid_start = get_yz(xid, start_point, direction, stepsizes, lbb)    
+            
+            # for yid_offset in range(5):
+            #     yid = yid_start - 1 + yid_offset
+            #     for zid_offset in range(5):
+            #         zid = zid_start - 1 + zid_offset
+            for yid in range(xdim):
+                for zid in range(xdim):
+                    vid, lb, rt, outside = get_voxel_id(xid, yid, zid, lbb, stepsizes, resolution)
+                    dist_in_voxel = dr.detach(beams.intersect3D(lb, rt, False))
+                    contribution = dr.select((~outside) & beams.active, dist_in_voxel * beams.color / voxel_volume, 0.0)
+                    # if beams.bounceIdx == 1:
+                        # and xid == 4 and yid == 4 and zid == 5:
+                        # print(beams.start)
+                        # print(beams.end)
+                        # print("lb, rt", lb, rt)
+                        # print(dr.floor((beams.start - lbb) / stepsizes) * stepsizes + lbb)
+                        # print(dr.floor((beams.start - lbb) / stepsizes))
+                        # print("distance", beams.intersect3D(mi.Vector3i(6, 4, 5) * stepsizes + lbb, mi.Vector3i(6, 4, 5) * stepsizes + stepsizes + lbb, True))
+                        # print(dist_in_voxel.numpy()[3])
+                        # t = dist_in_voxel.numpy()[3]
+                        # print(t)
+                        # if t > 0:
+                            # print("distance ", t)
+                            # print(dist_in_voxel)
+                            # print(vid)
+                            # print(xid, yid, zid)
+                        # print(contribution)
+                    dr.scatter_add(cur_voxels, contribution, vid)
+                        # exit(0)
+                    
+                    # valid_vid_mask = dr.compress((vid > 0) & (vid < all_voxel))
+                    #TODO, WHY there is zero in vid
+                    # vid_valid = dr.select(outside | ~beams.active, 0, vid)
+                    # print("vid", vid)
+                    # print("xid", xid)
+                    # print("yid", yid_start)
+                    # print("zid", zid)
+                    # print("beam active", beams.active)
+                    # print("vid_valid", dr.width(vid_valid), vid_valid)
+                    # print("voxels", dr.width(voxels))
+                    # print("contribution", dr.width(contribution))
+                    # if beams.bounceIdx == 1:
+                        # dr.scatter_add(cur_voxels, contribution, vid)
+                    
+                    #     print(xid, "cur_voxel", dist_in_voxel)
+                        # print(xid, "cur_voxel", dist_in_voxel)
 
-            start_point += (dist_in_voxel + 0.00001) * direction
-            total_length -= dist_in_voxel
-        # exit(0)
-        # print(voxels)
+            voxels += cur_voxels
+            
+            # xid += dr.select(direction.x > 0.0, 1, -1)
+
     return voxels
 
 
@@ -1272,7 +1361,6 @@ def accumulate_photon_beams(beams, resolution, lbb, rtf):
     voxel_volume = stepsizes.x * stepsizes.y * stepsizes.z
 
     for vid in range(all_voxel):
-        print(vid)
         vid = UInt(vid)
         dr.make_opaque(vid)
         xid = vid // (resolution.y * resolution.z)
@@ -1284,10 +1372,10 @@ def accumulate_photon_beams(beams, resolution, lbb, rtf):
         vrtf = vlbb + stepsizes
 
         # return this constant with right value
-        constant = 1.0
+        # constant = 1.0
         for beam in beams:
             dist = beam.intersect3D(vlbb, vrtf)
-            dr.scatter_add(voxels, dist * constant / voxel_volume, vid)
+            dr.scatter_add(voxels, dist * beam.color / voxel_volume, vid)
             dr.eval()
 
     
@@ -1305,6 +1393,7 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
     radiance = dr.zeros(FloatD, num_neutron) + 1.0 
     
     energy_group_idx = dr.zeros(UInt, num_neutron) # from energy group idx 0 to n, the energy goes from high to low
+    beam_weight = dr.ones(FloatD, num_neutron)
     active = True
 
     bounceIdx = 0
@@ -1316,14 +1405,16 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid = sample_and_compute_attenuation_along_ray(scene, 
                                                                   all_its, material_spaces, 
                                                                   ray_current, scm, 
-                                                                  vertices_list, faces_list, rng, energy_group_idx, beams, bounceIdx)
+                                                                  vertices_list, faces_list, rng, energy_group_idx, beams, bounceIdx, beam_weight)
         # dr.detach(all_its)
         terminate_ray = mask_invalid | exit_ray
 
         if bounceIdx == 0:
             incremental = (attenuation * radiance & active)
         else:
-            fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
+            #fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
+            # keep all z being zero
+            fp = 1.0 / (2.0 * dr.pi)
             incremental = ((attenuation * radiance * fp / dr.detach(fp) & active)) 
 
         # add the weight to corresponding energy group
@@ -1334,6 +1425,7 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         if reparam:
             cross_section_reparam_t = feature.ext * reparam_factor
             pdf = pdf * reparam_factor
+            
         else:
             cross_section_reparam_t = feature.ext
 
@@ -1342,10 +1434,13 @@ def render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list,
         
         # phase function, sample a direction
         # better sample from the source instead of sample from the phase function
-        wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+        # wo = sample_direction_hg(rng, ray_current.d, AVERAGE_COS)
+        # 2D version, keep z = 0 for all computation
+        wo = phase_2d(sample_float_32(rng))
+
         wi_theta = -ray_current.d
         radiance *= (attenuation_till_scatter / dr.detach(pdf)) * (cross_section_reparam_t * feature.alb) 
-
+        beam_weight *= (attenuation_till_scatter) * (cross_section_reparam_t * feature.alb) 
         #use energy dependent phase function to decide the change of energy group of each particle
         energy_group_idx, group_pdf = sample_next_energy_group(rng, feature.phase_cdfs, scm.energy_groups)
         # update ray

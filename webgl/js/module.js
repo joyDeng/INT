@@ -154,11 +154,13 @@ function getVolumeSliceContent(voxels){
             newTexture[i * 3] = 0.0;
             newTexture[i * 3 + 1] = Math.min(Math.floor(voxels[i] * sliceIntensity), 255);
             newTexture[i * 3 + 2] = 0.0;
+            
         }else{
             newTexture[i * 3] = Math.min(Math.floor(Math.abs(voxels[i]) * sliceIntensity), 255);
             newTexture[i * 3 + 1] = 0.0;
             newTexture[i * 3 + 2] = 0.0;
         }
+        console.log(voxels[i]);
         
     }
     // console.log("range ", range);
@@ -395,9 +397,9 @@ function draw() {
         gl.lineWidth(5);
         // console.log(loaded_data.length)
         if (loaded_data.length == 0){   
-            drawPrimitive(gl.LINES, [1.0, 1.0], [-2, 0, 0, 2, 0, 0]);
-            drawPrimitive(gl.LINES, [1.0, 1.0], [0, -2, 0, 0, 2, 0]);
-            drawPrimitive(gl.LINES, [1.0, 1.0], [0, 0, -2, 0, 0, 2]);
+            drawPrimitive(gl.LINES, [1.0, 1.0], [-3, 0, 0, 3, 0, 0]);
+            drawPrimitive(gl.LINES, [1.0, 1.0], [0, -3, 0, 0, 3, 0]);
+            drawPrimitive(gl.LINES, [1.0, 1.0], [0, 0, -3, 0, 0, 3]);
         }else{
             
             for (l = 0 ; l < loaded_data.length ; l++){
