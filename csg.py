@@ -422,17 +422,31 @@ def material_node_ids(scm, space_state, ray_num):
         ray_num: numbers of ray in parallel
     """
     material_ids = dr.zeros(UInt, ray_num) + scm.num_material
-    # print(space_state)
     query_state_binary = 2.0 * (space_state / 2 - dr.floor(space_state / 2))
-    # print("binary state", query_state_binary)
-    # print("\n")
     # query_state_binary = space_state % 2
     for node_id in range(len(scm.csg_node_list)):
         in_node_mask = inside_by_node_id(query_state_binary, scm, node_id)
         material_ids = dr.select(in_node_mask == 1, node_id, material_ids)
     return material_ids
 
-def get_material_space_along_ray(its, scm, ray_num, ray_dir):
+def get_num_intersections(its, scm, ray_dir, ray_num):
+    init_state_dr = dr.zeros(TensorXf, shape=[ray_num, scm.num_geo])
+    for intersect in its:
+        it = intersect[0]
+        # ignore the tagent intersection
+        no_parallel = dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0
+        active_mask = (intersect[1] & no_parallel) 
+        shape_id = intersect[2]
+
+        active_idx = dr.compress(active_mask)  
+        active_pidx = dr.gather(UInt, UInt(shape_id), UInt(active_idx))
+        
+        trace_space = dr.zeros(TensorXf, shape=[ray_num, scm.num_geo])
+        dr.scatter(trace_space.array, 1.0, active_idx * scm.num_geo + active_pidx)
+        init_state_dr += trace_space
+    return init_state_dr
+
+def get_material_space_along_ray(its, its_inv, scm, ray_num, ray_dir):
     """ 
     # Return the list of material_spaces traveled along the ray (list length should equals to number of intersection + 1)
     # Parameters:
@@ -442,10 +456,6 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
     #   ray_dir: direction of the ray is traveling TODO: this parameter might not be neccessary
     """
     geo_state_list = []
-    # idx = 0
-    
-    # init_state_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
-    
     init_state_dr = dr.zeros(TensorXf, shape=[ray_num, scm.num_geo])
 
 
@@ -456,56 +466,31 @@ def get_material_space_along_ray(its, scm, ray_num, ray_dir):
         active_mask = (intersect[1] & no_parallel) 
         shape_id = intersect[2]
 
-        # torch implementation
-        # pidx_torch = shape_id.torch().long()
-        # value = dr.select(active_mask, 1.0, 0.0)
-        # active_idx_torch = torch.where(value.torch() == 1.0)[0].long()
-        # active_pidx_torch = torch.gather(pidx_torch, 0, active_idx_torch)
-
-        # dr implementation
         active_idx = dr.compress(active_mask)  
         active_pidx = dr.gather(UInt, UInt(shape_id), UInt(active_idx))
-  
-        # torch implementation
-        # trace_space_torch = torch.zeros([ray_num, scm.num_geo], dtype=torch.int64, device="cuda:0")
-        # trace_space_torch[active_idx_torch, active_pidx_torch] = 1
-        # init_state_torch[active_idx_torch, active_pidx_torch] += 1
-        # geo_state_list.append(trace_space_torch)
         
-
         trace_space = dr.zeros(TensorXf, shape=[ray_num, scm.num_geo])
         dr.scatter(trace_space.array, 1.0, active_idx * scm.num_geo + active_pidx)
         init_state_dr += trace_space
         geo_state_list.append(trace_space)
-        # drtrace_space.array
 
-        # idx += 1
-
-
-        
-    # summarize init state, where 1 stands for insides, and 0 stands for outsides
-    # init_material_id = material_node_ids(scm, init_state_torch, ray_num)
-    init_material_id = material_node_ids(scm, init_state_dr, ray_num)
-    # print(type(init_material_id), init_material_id)
-    # exit(0)
+    # print("intersection amount", init_state_dr)
+    # print("interrsection amount inverse", get_num_intersections(its_inv, scm, -ray_dir, ray_num))
+    init_state_dr_inv = get_num_intersections(its_inv, scm, -ray_dir, ray_num)
+    normalized_init_state = (2.0 * (init_state_dr / 2 - dr.floor(init_state_dr / 2))) * (2.0 * (init_state_dr_inv / 2 - dr.floor(init_state_dr_inv / 2)))
+    init_material_id = material_node_ids(scm, normalized_init_state, ray_num)
+    # print(init_material_id)
 
     material_spaces = [init_material_id]
-    cur_state = dr.zeros(TensorXf, [ray_num, scm.num_geo]) + init_state_dr
+    cur_state = dr.zeros(TensorXf, [ray_num, scm.num_geo]) + normalized_init_state
 
     # loop through the geo_state_list and get information about material space along the ray
     for state in geo_state_list:
-        # print("state_dr", init_state_dr)
-        # print("cur_state", cur_state)
-        
         cur_state = next_state(cur_state, state)
-        # print("cur_state", cur_state, "init_state", init_state_dr)
-        # exit(0)
         cur_material_id = material_node_ids(scm, cur_state, ray_num)
-        # print(cur_material_id)
         material_spaces.append(cur_material_id)
-    
-    # exit(0)
-    # print(material_spaces)
+
+    # material_spaces[-1] *= 0 + scm.num_material
     return material_spaces
 
 
@@ -572,15 +557,13 @@ def scene_material_intersect(scene, rays, scm, active):
     
     # get all intersction of ray with the scene geometries  
     its = dr.detach(geo_intersect(scene, rays, active))
+    rays_inv = mi.Ray3f(rays.o, -rays.d)
+    its_inv = dr.detach(geo_intersect(scene, rays_inv, active))
     num_rays = dr.width(rays)
-    # v = 1
-    # print(type(num_rays), type(v))
-    material_spaces = get_material_space_along_ray(its, scm, num_rays, rays.d)
+    material_spaces = get_material_space_along_ray(its, its_inv, scm, num_rays, rays.d)
     # print(material_spaces)
     # exit(0)
-    # remove the invalid geometry ray interesction
-    # num_intersections = len(its)
-    # assert num_intersections == (len(material_spaces) - 1), "length of intersection and material space doesn't match"
+    
     return its, material_spaces
 
 
@@ -760,15 +743,15 @@ def test_tracklength_1D(bounce_a, sigma_t, number_neutron, resolution, length):
 
 
 class Beams():
-    def __init__(self, start, end, active = True, multiply = 1.0, color=1.0, bounceIdx=0):
-        self.start =  start
+    def __init__(self, start, end, direction, length, active = True, multiply = 1.0, color=1.0, bounceIdx=0):
+        self.start = start
         self.end = end
-        self.length = dr.norm(end - start)
+        self.dir = direction
+        self.length = length
         self.active = dr.select(active, True, False)
-
-        # print("multiply: ", multiply)
-        F = dr.exp(multiply) * color
-        self.color = F / dr.detach(F) 
+        F = dr.exp(multiply) 
+        self.color = F / dr.detach(F) * color
+        # print(type(self.color))
         self.bounceIdx = bounceIdx        
 
 
@@ -798,25 +781,25 @@ class Beams():
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y) & (bl.z <= self.start.z) & (tr.z >= self.start.z)
         inside_end = (bl.x <= self.end.x) & (tr.x >= self.end.x) & (bl.y <= self.end.y) & (tr.y >= self.end.y) & (bl.z <= self.end.z) & (tr.z >= self.end.z)
 
-        if printout:
-            print(inside_end)
+        # if printout:
+        #     print(inside_end)
 
-        dir = self.end - self.start
-        dir = dir / dr.norm(dir)
+        bdir = self.dir
         
-        d_tx_left = (bl.x - self.start.x) / dir.x
-        d_tx_right = (tr.x - self.start.x) / dir.x
-        d_ty_bot = (bl.y - self.start.y) / dir.y
-        d_ty_top = (tr.y - self.start.y) / dir.y
-        d_tz_back = (bl.z - self.start.z) / dir.z
-        d_tz_front = (tr.z - self.start.z) / dir.z
+        d_tx_left = (bl.x - self.start.x) / bdir.x
+        d_tx_right = (tr.x - self.start.x) / bdir.x
+        d_ty_bot = (bl.y - self.start.y) / bdir.y
+        d_ty_top = (tr.y - self.start.y) / bdir.y
+        d_tz_back = (bl.z - self.start.z) / bdir.z
+        d_tz_front = (tr.z - self.start.z) / bdir.z
 
-        ptxl = d_tx_left * dir + self.start
-        ptxr = d_tx_right * dir + self.start
-        ptyb = d_ty_bot * dir + self.start
-        ptyt = d_ty_top * dir + self.start
-        ptzb = d_tz_back * dir + self.start
-        ptzf = d_tz_front * dir + self.start
+        ptxl = d_tx_left * bdir + self.start
+        ptxr = d_tx_right * bdir + self.start
+        ptyb = d_ty_bot * bdir + self.start
+        ptyt = d_ty_top * bdir + self.start
+        ptzb = d_tz_back * bdir + self.start
+        ptzf = d_tz_front * bdir + self.start
+
 
         txl_valid = (ptxl.y >= bl.y) & (ptxl.y <= tr.y) & (ptxl.z >= bl.z) & (ptxl.z <= tr.z) & (d_tx_left >= 0.0) & (d_tx_left < self.length)
         txr_valid = (ptxr.y >= bl.y) & (ptxr.y <= tr.y) & (ptxr.z >= bl.z) & (ptxr.z <= tr.z) & (d_tx_right >= 0.0) & (d_tx_right < self.length)
@@ -832,16 +815,16 @@ class Beams():
         intersection_count += dr.select(tzb_valid, 1.0, 0.0)
         intersection_count += dr.select(tzf_valid, 1.0, 0.0)
 
-        if printout:
-            print("intersection count", intersection_count)
-            print("intersection txl_valid", txl_valid)
-            print("txr_valid",  txr_valid)
-            print("tyb_valid", tyb_valid)
-            print("tyt_valid", tyt_valid)
-            print("tzb_valid", tzb_valid)
-            print("tzf_valid", tzf_valid)
-            print("ptyt", ptyt)
-            print("start", self.start)
+        # if printout:
+        # print("====================intersection count", intersection_count)
+        # print("start in", inside_start)
+        # print("intersection txl_valid", txl_valid)
+        # print("txr_valid",  txr_valid)
+        # print("tyb_valid", tyb_valid)
+        # print("tyt_valid", tyt_valid)
+        # print("tzb_valid", tzb_valid)
+        # print("tzf_valid", tzf_valid)
+        
 
         distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, dr.inf)))
         distance_min = dr.select(tyb_valid & (d_ty_bot < distance_min), d_ty_bot, distance_min)
@@ -855,6 +838,11 @@ class Beams():
         distance_max = dr.select(tzb_valid & (d_tz_back > distance_max), d_tz_back, distance_max)
         distance_max = dr.select(tzf_valid & (d_tz_front > distance_max), d_tz_front, distance_max)
 
+        exit_step_x = dr.select( bdir.x < 0.0, dr.select(txl_valid, -1, 0), dr.select((bdir.x > 0.0) & txr_valid, 1, 0))
+        exit_step_y = dr.select( bdir.y < 0.0, dr.select(tyb_valid, -1, 0), dr.select((bdir.y > 0.0) & tyt_valid, 1, 0))
+        exit_step_z = dr.select( bdir.z < 0.0, dr.select(tzb_valid, -1, 0), dr.select((bdir.z > 0.0) & tzf_valid, 1, 0))
+        exit_step = mi.Vector3i(exit_step_x, exit_step_y, exit_step_z)
+
         distance = distance_max - distance_min
         distance = dr.select(intersection_count == 1.0, dr.select(inside_start, distance_min, dr.select(inside_end, self.length - distance_min, 0.0)), distance)
 
@@ -864,8 +852,12 @@ class Beams():
 
         distance = dr.select(zero_distance | (intersection_count == 0.0), 0.0, distance)
         distance = dr.select(inside_end & inside_start, self.length, distance)
+
+        # print("distance", distance & self.active)
+        # print("self active", self.active)
+        # exit(0)
         
-        return distance & self.active
+        return distance & self.active, exit_step
 
     def intersect(self, bl, tr):
         """
@@ -993,9 +985,9 @@ def save_grid_data(voxel, resolution, boundingbox, filename, mode):
     stepsize = ((boundingbox[1] - boundingbox[0]) / resolution)[0]
     # print(stepsize)
     # exit(0)
-    print(resolution)
+    # print(resolution)
     reso = resolution.numpy().reshape(-1)
-    print(reso)
+    # print(reso)
 
     with open(filename, mode) as newFile:
         # shapes = voxel.shape
@@ -1284,7 +1276,6 @@ def test1():
     rays = mi.Ray3f(o, v)
 
     its, material_spaces = scene_material_intersect(scene, rays, media, True)
-    print(material_spaces)
     # print("its", its)
     # print("material ids", material_spaces)
     # first_hit = ith_hit_from_current(its, material_spaces, num_ray, 0)
