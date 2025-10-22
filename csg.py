@@ -751,9 +751,13 @@ class Beams():
         self.active = dr.select(active, True, False)
         F = dr.exp(multiply) 
         self.color = F / dr.detach(F) * color
-        # print(type(self.color))
         self.bounceIdx = bounceIdx        
+        self.cross_section = dr.detach(length * 0.0)
+        self.albedo = dr.detach(length * 0.0)
 
+    def set_material(self, cross_section, albedo):
+        self.cross_section = cross_section
+        self.albedo = albedo
 
     def concat(self, c):
         """this function is not in use"""
@@ -987,7 +991,9 @@ def save_grid_data(voxel, resolution, boundingbox, filename, mode):
     # exit(0)
     # print(resolution)
     reso = resolution.numpy().reshape(-1)
-    # print(reso)
+    print(reso, resolution)
+    
+    np.save(filename.split('.')[-2] + "_numpy.npy", voxel.reshape(reso))
 
     with open(filename, mode) as newFile:
         # shapes = voxel.shape

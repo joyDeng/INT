@@ -27,7 +27,7 @@ from constant import DATA_DIR
 
 
 NUMBER_NEUTRONS = 100000
-MAX_BOUNCE = 2
+MAX_BOUNCE = 1
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -1271,6 +1271,39 @@ def net_voxel(cur_xyz_id, exit_step, resolution):
     stop_march = stop_xyz.x & stop_xyz.y & stop_xyz.z | ~in_range
     return net_voxel_id, stop_march
 
+def accumulate_photon_point(beam_list, resolution, boundingbox):
+    lbb = boundingbox[0]
+    rtf = boundingbox[1]
+    
+    stepsizes = (rtf - lbb) / resolution
+    all_voxel = (resolution.x * resolution.y * resolution.z)[0]
+
+    voxels = dr.zeros(FloatD, all_voxel)
+    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)[0]
+
+    m = resolution.x + resolution.y + resolution.z 
+    
+    max_grid = m.numpy()[0]
+    
+    len_beam_list = len(beam_list)
+    for bid in range(len_beam_list):
+        beams = beam_list[bid]
+
+        endpoint = beams.end
+
+        cur_xyz_id = dr.floor((beams.end - lbb) / stepsizes)
+        valid_ray = (beams.length != dr.inf) & beams.active
+        vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+
+
+        cur_voxels = dr.zeros(FloatD, all_voxel)
+        contribution = dr.select((~outside) & valid_ray, beams.color / voxel_volume, 0.0)
+            
+        dr.scatter_add(cur_voxels, contribution, vid)
+
+        voxels += cur_voxels
+    return voxels
+
 def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
     lbb = boundingbox[0]
     rtf = boundingbox[1]
@@ -1286,7 +1319,6 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox):
     max_grid = m.numpy()[0]
     
     len_beam_list = len(beam_list)
-    # print("\nbeam length: ", len_beam_list)
 
     for bid in range(len_beam_list):
         beams = beam_list[bid]
