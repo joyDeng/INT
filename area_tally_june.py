@@ -22,8 +22,7 @@ from csg import CSGLeaf, CSGNode, SceneMaterial, MaterialParameter, MultiGroupTa
 mi.set_variant('cuda_ad_rgb')
 from constant import DATA_DIR
 
-# dr.set_flag(dr.JitFlag.Debug, True)
-# dr.set_log_level(dr.LogLevel.Info)
+
 
 
 NUMBER_NEUTRONS = 100000
