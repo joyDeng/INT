@@ -1333,14 +1333,18 @@ def get_voxel(startpoint, lbb, steps, resolution):
     outside = (xyz_id.x > (resolution.x-1)) | (xyz_id.y > (resolution.y-1)) | (xyz_id.z > (resolution.z-1)) | (xyz_id.x < 0) | (xyz_id.y < 0) | (xyz_id.z < 0) 
     return vid, lb, rt, xyz_id, outside
 
+def get_sol_id(xyzid, reso):
+    vid = xyzid.z * reso.x * reso.y + xyzid.y * reso.x + xyzid.x
+    outside = (xyzid.x > (reso.x-mi.Int32(1))) | (xyzid.y > (reso.y-mi.Int32(1))) | (xyzid.z > (reso.z-mi.Int32(1))) | (xyzid.x < mi.Int32(0)) | (xyzid.y < mi.Int32(0)) | (xyzid.z < mi.Int32(0)) 
+    return vid, outside
+
 def get_voxel_id(xyzid, lbb, steps, resolution):
-    # dr.make_opaque(lbb)
-    # print("evaluate steps: ")
     dr.make_opaque(steps)
-    vid = xyzid.z * resolution.x * resolution.y + xyzid.y * resolution.x + xyzid.x
-    outside = (xyzid.x > (resolution.x-mi.UInt32(1))) | (xyzid.y > (resolution.y-mi.UInt32(1))) | (xyzid.z > (resolution.z-mi.UInt32(1))) | (xyzid.x < mi.UInt32(0)) | (xyzid.y < mi.UInt32(0)) | (xyzid.z < mi.UInt32(0)) 
+    # vid = xyzid.z * resolution.x * resolution.y + xyzid.y * resolution.x + xyzid.x
+    # outside = (xyzid.x > (resolution.x-mi.Int32(1))) | (xyzid.y > (resolution.y-mi.Int32(1))) | (xyzid.z > (resolution.z-mi.Int32(1))) | (xyzid.x < mi.Int32(0)) | (xyzid.y < mi.Int32(0)) | (xyzid.z < mi.Int32(0)) 
+    vid, outside = get_sol_id(xyzid, resolution)
     lb = (xyzid) * steps + lbb
-    rt = (xyzid + mi.UInt32(1)) * steps + lbb
+    rt = (xyzid + mi.Int32(1)) * steps + lbb
     # vid = dr.select(outside, mi.UInt32(0), vid)
     return vid, lb, rt, outside
 
@@ -1368,36 +1372,155 @@ def accumulate_photon_point(beam_list, resolution, boundingbox, bounceid=-1):
     rtf = boundingbox[1]
     
     stepsizes = (rtf - lbb) / resolution
-    all_voxel = (resolution.x * resolution.y * resolution.z)[0]
+    all_voxel = mi.UInt32(resolution.x * resolution.y * resolution.z)
 
     voxels = dr.zeros(FloatD, all_voxel)
-    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)[0]
-
-    m = resolution.x + resolution.y + resolution.z 
+    voxel_volume = FloatD(stepsizes.x * stepsizes.y * stepsizes.z)
     
-    max_grid = m.numpy()[0]
     
-    len_beam_list = len(beam_list)
-    
-    for bid in range(len_beam_list):
+    for bid in range(len(beam_list)):
         beams = beam_list[bid]
 
         active_bid = True
         if bounceid > -1:
             active_bid = (beams.bounceIdx == bounceid)
 
-        cur_xyz_id = dr.floor((beams.end - lbb) / stepsizes)
+        cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
         valid_ray = (beams.length != dr.inf) & beams.active & beams.collision
+        
         vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
 
-        cur_voxels = dr.zeros(FloatD, all_voxel)
-        contribution = dr.select((~outside) & valid_ray & active_bid, beams.color / voxel_volume / beams.cross_section, 0.0)
+        contribution =  beams.color / voxel_volume / beams.cross_section
+        valid_mask = (~outside) & valid_ray & active_bid
             
-        dr.scatter_add(cur_voxels, contribution, vid)
+        dr.scatter_add(voxels, contribution, vid, valid_mask)
+        bid += 1
 
-        voxels += cur_voxels
     return voxels
 
+def dot_axis(c):
+    dot_x = dr.dot(c, mi.Vector3f(1, 0, 0))
+    dot_y = dr.dot(c, mi.Vector3f(0, 1, 0))
+    dot_z = dr.dot(c, mi.Vector3f(0, 0, 1))
+
+    return (dot_x == 0) | (dot_y == 0) | (dot_z == 0)
+
+def vector_dot_axis(c, omb):
+    dot_x = dr.dot(c, mi.Vector3f(1, 0, 0))
+    dot_y = dr.dot(c, mi.Vector3f(0, 1, 0))
+    dot_z = dr.dot(c, mi.Vector3f(0, 0, 1))
+
+    dot_x_ = dr.dot(c, mi.Vector3f(-1, 0, 0))
+    dot_y_ = dr.dot(c, mi.Vector3f(0, -1, 0))
+    dot_z_ = dr.dot(c, mi.Vector3f(0, 0, -1))
+    
+    cos_x = dr.select(c.x < 0.0, dot_x_, dot_x)
+    cos_y = dr.select(c.y < 0.0, dot_y_, dot_y)
+    cos_z = dr.select(c.z < 0.0, dot_z_, dot_z)
+    return cos_x, cos_y, cos_z
+
+    
+def contribution_to_point(b, origin, end, ray_dir, distance):
+    c_1 = dr.norm(origin - b)
+    c_2 = dr.norm(end - b)
+    
+    # c1_closer = dot_axis(c_1)
+    # c2_closer = dot_axis(c_2)
+    c1_closer = (c_1 < c_2)
+
+    o = dr.select(c1_closer, origin, end)
+    d = dr.select(c1_closer, ray_dir, -ray_dir)
+    
+
+    cx, cy, cz = vector_dot_axis(d, o - b)
+    print(" cx, cy, cz", cx, cy, cz)
+    
+
+    v = dr.abs(o-b)
+    print(" ox, oy, oz", v, " o: ", o," b: ",  b, " closer: ", c1_closer)
+
+    dist_sqr = distance * distance
+    contribution = v.x * v.y * v.z * distance + [v.x * v.y * cz + v.x * v.z * cy + cx * v.y * v.z] * dist_sqr / FloatD(2.0) + [v.x * cy * cz + cx * v.y * cz + cx * cy * v.z] *  dist_sqr * distance / FloatD(3.0) + cx * cy * cz * dist_sqr * dist_sqr / FloatD(4.0)
+    # contribution = c_constant / 4.0 * dist_sqr * dist_sqr
+    # print( " contribution: ", contribution)
+    print(" distance ", distance, dist_sqr)
+    return contribution
+
+def add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, step, stepsizes, start_o, end_o, concat_beams, distance, volume, lb):
+    vid, outside = get_sol_id(cur_xyz_id + step, sol_vox_reso)
+    contri = contribution_to_point(lb + step * stepsizes, start_o, end_o, concat_beams.dir, distance) / volume
+    print(" contribution to ", step, " is ", contri & contrimask)
+    dr.scatter_add(sols, contri * concat_beams.color / volume, vid, contrimask & (~outside))
+
+
+def accumulate_photon_beam_hat(beam_list, resolution, boundingbox, bounceid):
+    dr.make_opaque(boundingbox)
+    dr.make_opaque(resolution)
+    sol_vox_reso = resolution + mi.Vector3i(1)
+    lbb = boundingbox[0]
+    rtf = boundingbox[1]
+    stepsizes = (rtf - lbb) / resolution
+    lb = mi.Vector3f(lbb)
+    rt = mi.Vector3f(rtf)
+    dr.make_opaque(stepsizes)
+    dr.make_opaque(bounceid)
+    
+    all_voxel = mi.UInt32((resolution.x * resolution.y * resolution.z))
+    solution_voxel_number = mi.UInt32(((sol_vox_reso.x)* (sol_vox_reso.y) * (sol_vox_reso.z)))
+
+    # voxels = dr.zeros(FloatD, all_voxel)
+    sols = dr.zeros(FloatD, solution_voxel_number)
+    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)
+
+    max_grid = resolution.x + resolution.y + resolution.z 
+    len_beam_list = len(beam_list)
+    beam_list[0].compress()
+    concat_beams = beam_list[0]
+    for i in range(1, len_beam_list):
+        beam_list[i].compress()
+        concat_beams.concat(beam_list[i])
+
+    cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.start - lbb) / stepsizes))
+    active_march = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    outside = dr.full(mi.Bool, False, dr.width(concat_beams.start))
+    exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams.start))
+    dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams.start)) 
+    vid = dr.zeros(mi.UInt32, dr.width(concat_beams.start))
+    contribution = dr.zeros(FloatD, dr.width(concat_beams.start))
+    
+    if bounceid > -1:
+        active_bid = (concat_beams.bounceIdx == mi.UInt32(bounceid))
+    
+    it = mi.UInt32(0)
+    dr.make_opaque(it)
+    
+    while it < max_grid:
+        print("it-----------------------------------------------------------------------", it)
+        dr.make_opaque(cur_xyz_id)
+        vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+        
+        dist_in_voxel, exit_step, start_o, end_o = concat_beams.intersect3D_hat(lb, rt)
+
+        contrimask = (~outside) & concat_beams.active & active_march & active_bid
+        add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([0, 0, 0]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([1, 0, 0]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([0, 1, 0]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([0, 0, 1]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([1, 1, 0]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([1, 0, 1]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([0, 1, 1]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # add_to_point(cur_xyz_id, sol_vox_reso, sols, contrimask, mi.Vector3i([1, 1, 1]), stepsizes, start_o, end_o, concat_beams, dist_in_voxel, voxel_volume, lb)
+        # exit(0)
+        # if it == UInt32(5):
+        #     exit(0)
+        # contribution =  dist_in_voxel * concat_beams.color / voxel_volume
+        # dr.scatter_add(voxels, contribution, vid, valid_mask)
+        cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
+        active_march = active_march & (~stop_march)
+        it += 1
+    # print(voxels)
+    return sols
 
 
 def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=-1):
@@ -1420,69 +1543,37 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=
     max_grid = resolution.x + resolution.y + resolution.z 
     
     # max_grid = mi.UInt32(m.numpy()[0])
-    
     len_beam_list = len(beam_list)
+    
+    beam_list[0].compress()
     concat_beams = beam_list[0]
     for i in range(1, len_beam_list):
-        # print(i)
-        # print(dr.width(concat_beams.start), dr.width(beam_list[i].start))
+        beam_list[i].compress()
         concat_beams.concat(beam_list[i])
-        # print("after concat: ", dr.width(concat_beams.start))
-    # exit(0)
-
-    # for bid in range(len_beam_list):
-        # beams = beam_list[bid]
 
     cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.start - lbb) / stepsizes))
-    # print("type of cur_xyz_id", type(cur_xyz_id))
-    # exit(0)
-    # max_grid = mi.UInt32(max_grid)
-    # dr.make_opaque(cur_xyz_id)
-    # active_march = True
-    active_march = dr.full(mi.Bool, True, dr.width(concat_beams))
-    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams))
-    outside = dr.full(mi.Bool, False, dr.width(concat_beams))
-    exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams))
-    dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams)) 
-    vid = dr.zeros(mi.UInt32, dr.width(concat_beams))
-    contribution = dr.zeros(FloatD, dr.width(concat_beams))
+    active_march = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    outside = dr.full(mi.Bool, False, dr.width(concat_beams.start))
+    exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams.start))
+    dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams.start)) 
+    vid = dr.zeros(mi.UInt32, dr.width(concat_beams.start))
+    contribution = dr.zeros(FloatD, dr.width(concat_beams.start))
     
     if bounceid > -1:
         active_bid = (concat_beams.bounceIdx == mi.UInt32(bounceid))
     
-    # def loop_cond(i, active_march, voxels, cur_xyz_id):
-    #     return i <= max_grid # returns a Dr.Jit array or scalar Bool
-
-    # def loop_body(i, active_march, voxels, cur_xyz_id):
-    #     vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
-    #     dist_in_voxel, exit_step = concat_beams.intersect3D(lb, rt, False)
-    #     contribution = dr.select((~outside) & concat_beams.active & active_march & active_bid, dist_in_voxel * concat_beams.color / voxel_volume, Float(0.0))
-    #     dr.scatter_add(voxels, contribution, vid)
-
-    #     cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
-    #     active_march &= (~stop_march) 
-
-    #     i += 1
-    
-    #     return active_march, voxels, cur_xyz_id
-
-    
-    # voxels = dr.while_loop(state=(i, active_march, voxels, cur_xyz_id), cond=loop_cond, body=loop_body)
-    # loop = dr.Loop(state=("cur_xyz_id", "active_march", "voxels"))
     it = mi.UInt32(0)
     dr.make_opaque(it)
     
-    # dr.set_flag(dr.JitFlag.Debug, True)
-    # dr.set_log_level(dr.LogLevel.Info)
-    # dr.set_flag(dr.JitFlag.PrintIR, True)
     while it < max_grid:
         # print("it-----------------------------------------------------------------------", it)
         dr.make_opaque(cur_xyz_id)
         vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
         dist_in_voxel, exit_step = concat_beams.intersect3D(lb, rt)
         valid_mask = (~outside) & concat_beams.active & active_march & active_bid
-        # print("mask type", type(outside), type(concat_beams.active), type(active_march), type(active_bid), type(dist_in_voxel), type(concat_beams.color), type(voxel_volume), type(voxels))
-        contribution = dist_in_voxel * concat_beams.color / voxel_volume
+
+        contribution =  dist_in_voxel * concat_beams.color / voxel_volume
         dr.scatter_add(voxels, contribution, vid, valid_mask)
         cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
         active_march = active_march & (~stop_march)

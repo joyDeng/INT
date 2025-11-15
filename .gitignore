@@ -7,3 +7,4 @@ data
 *.mtl
 *.bat
 __pycache__
+*.png

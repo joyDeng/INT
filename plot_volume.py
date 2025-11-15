@@ -69,9 +69,32 @@ def visualize_two(id):
     fig.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
     
     plt.tight_layout()
-    plt.savefig("finite_difference_vs_autodiff_1b_plane_emission_inner_sphere_100000000co_dense.png")
+    plt.savefig("fdvsad_10sp.png")
     # plt.show()
 
+def visualize_test():
+    field1 = np.load("test_beam_hat_numpy.npy")
+    z_index = field1.shape[0] // 2  # middle slice along z-axis
+    slice1 = field1[z_index, :, :]
+    slice2 = field1[z_index+1, :, :]
+    slice3 = field1[z_index-1, :, :]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # --- Plot first volume ---
+    im1 = axes[0].imshow(slice1, cmap='viridis', origin='lower')
+    axes[0].set_title(f'Slice {z_index}')
+    axes[0].axis('off')
+
+    im1 = axes[1].imshow(slice2, cmap='viridis', origin='lower')
+    axes[1].set_title(f'Slice {z_index+1}')
+    axes[1].axis('off')
+
+    im1 = axes[2].imshow(slice3, cmap='viridis', origin='lower')
+    axes[2].set_title(f'Slice {z_index-1}')
+    axes[2].axis('off')
+    fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    plt.show()
 
 def visualize_one(id):
     field1 = np.load("{}+_two_sphere_collision_density_numpy.npy".format(id))
@@ -123,4 +146,5 @@ def visualize_one(id):
     plt.show()
 
 if __name__ == "__main__":
-    visualize_two(2)
+    # visualize_two(2)
+    visualize_test()

@@ -39,8 +39,8 @@ def load_test_scene_heat():
     m2 = CSGNode("difference", shape0, shape1)
     # scm = SceneMaterial([m1, m2], cross_tots, cross_as, 2, 1)
 
-    scm = SceneMaterial([m1, m2], [[0.7, 0.1]], [[0.95, 0.95]], 2, 1)
-    scm.set_material_sigma(TensorXf([[0.7, 0.1]]))
+    scm = SceneMaterial([m1, m2], [[0.1, 0.1]], [[0.95, 0.95]], 2, 1)
+    scm.set_material_sigma(TensorXf([[0.1, 0.1]]))
     scm.set_material_ald(TensorXf([[0.95, 0.95]]))
     phase_function = TensorXf([
         [[1.0, 1.0]],
@@ -487,15 +487,18 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
   
     # generate rays
     ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
-    ray_origin.x -= 2.0
+    ray_origin.x -= 3.01
     # ray_origin.y = 0.0
-    # ray_origin.y = sample_float_32(rng) * 2.0 - 1.0
+    ray_origin.y = sample_float_32(rng) * 2.0 - 1.0
     random_cos = sample_float_32(rng) * 2.0 - 1.0
-    ray_vec.x = dr.sqrt(1.0 - random_cos * random_cos)
-    ray_vec.y = random_cos
-    # ray_vec.x = 1.0
-    # ray_vec.y = 0.25
+    ray_vec.x += dr.sqrt(1.0 - random_cos * random_cos)
+    ray_vec.y += random_cos
+    # ray_vec.x += 1.0
+    # ray_vec.y -= 0.25
     ray_vec /= dr.norm(ray_vec)
+    # print(ray_vec)
+    # exit(0)
+    # ray_vec /= dr.norm(ray_vec)
     
     ray_current = mi.Ray3f(ray_origin, ray_vec)
     dr.make_opaque(ray_current)
@@ -525,14 +528,14 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
     Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True, beam_list) 
     
     if es == "tr":
-        spatial_distribution = accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bid)
+        spatial_distribution = accumulate_photon_beam_hat(beam_list, resolution, boundingbox, bid)
     else:
         spatial_distribution = accumulate_photon_point(beam_list, resolution, boundingbox, bid)
 
     voxels_array = spatial_distribution
 
     if saveVerticeFile:
-        save_grid_data(voxels_array.numpy(), resolution, boundingbox, "{}_two_sphere_collision_density.npy".format(file_id), "wb")
+        save_grid_data(voxels_array.numpy(), resolution+1, boundingbox, "{}_two_sphere_collision_density.npy".format(file_id), "wb")
         # for b in beam_list:   
         #     b.save_beams("{:02}_two_sphere_collision_density_vertices.npy".format(file_id), 'ab')
     return voxels_array
@@ -543,24 +546,24 @@ def two_sphere_get_spatial_gradient(nuetron_number, seed, file_id):
     boundingbox = [mi.Vector3f(-3.5, -3.5, -3.5), mi.Vector3f(3.5, 3.5, 3.5)]
 
     # finite difference
-    N = 1000
+    N = 1
     for i in range(N):
         print("finite diff iteration", i)
-        spatial_plus = two_sphere_get_spatial_distribution(nuetron_number, delta, seed+i * 10, resolution, boundingbox, False, str(file_id)+"+", 'tr', 1)
-        spatial_min = two_sphere_get_spatial_distribution(nuetron_number, -delta, seed+i * 10, resolution, boundingbox, False, str(file_id)+"-", 'tr', 1)
+        spatial_plus = two_sphere_get_spatial_distribution(nuetron_number, delta, seed+i * 10, resolution, boundingbox, False, str(file_id)+"+", 'tr', 0)
+        spatial_min = two_sphere_get_spatial_distribution(nuetron_number, -delta, seed+i * 10, resolution, boundingbox, False, str(file_id)+"-", 'tr', 0)
         if i == 0:
             gradients_fd = (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
         else:
             gradients_fd += (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
     
-    save_grid_data(gradients_fd / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_fd.npy".format(file_id), 'wb')
+    save_grid_data(gradients_fd / N, resolution+1, boundingbox, "{:02d}_two_sphere_collision_density_gradients_fd.npy".format(file_id), 'wb')
 
     for i in range(N):
         print("auto diff iteration", i)
         dr.set_flag(dr.JitFlag.Debug, False)
         Offset = FloatD(0.0)
         dr.enable_grad(Offset)
-        spatial_distribution = two_sphere_get_spatial_distribution(nuetron_number, Offset, seed + i * 10, resolution, boundingbox, True, file_id, 'tr', 1)
+        spatial_distribution = two_sphere_get_spatial_distribution(nuetron_number, Offset, seed + i * 10, resolution, boundingbox, True, file_id, 'tr', 0)
         dr.forward(Offset)
         if i == 0:
             gradients_ad = dr.grad(spatial_distribution).numpy()
@@ -568,28 +571,34 @@ def two_sphere_get_spatial_gradient(nuetron_number, seed, file_id):
         else:
             gradients_ad += dr.grad(spatial_distribution).numpy()
             dr.eval(gradients_ad)
-    save_grid_data(gradients_ad / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_ad.npy".format(file_id), 'wb')
+    save_grid_data(gradients_ad / N, resolution+1, boundingbox, "{:02d}_two_sphere_collision_density_gradients_ad.npy".format(file_id), 'wb')
 
 # @dr.syntax
-def test_kernel(num_neutrons, max_grid):
+def test_beams_hat(num_neutrons, reso):
     rng = mi.PCG32(size=num_neutrons, initstate=1)
-    dr.make_opaque(rng)
-    i = mi.UInt32(0)
-    max_rate = mi.UInt32(max_grid)
-    sum_array = dr.zeros(mi.Float)
+    ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
+    ray_origin.x -= 3.0
+    # ray_origin.y = 0.0
+    # ray_origin.y = sample_float_32(rng) * 2.0 - 1.0
+    # random_cos = sample_float_32(rng) * 2.0 - 1.0
+    # ray_vec.x = dr.sqrt(1.0 - random_cos * random_cos)
+    # ray_vec.y = random_cos
+    ray_vec.x += 1.0
+    ray_vec.y += 2.0
+    ray_vec /= dr.norm(ray_vec)
+    raylength = dr.full(FloatD, 4.0)
 
-    dr.set_flag(dr.JitFlag.Debug, True)
-    dr.set_log_level(dr.LogLevel.Info)
+    b = Beams(ray_origin, ray_origin + raylength * ray_vec, ray_vec, raylength, True)
+    beam_list = []
+    beam_list.append(b)
+     
+    resolution = mi.Vector3i(reso, reso, reso)
+    boundingbox = [mi.Vector3f(-3.5, -3.5, -3.5), mi.Vector3f(3.5, 3.5, 3.5)]
 
-    dr.set_flag(dr.JitFlag.PrintIR, True)
-    while i < max_rate:
-        x = rng.next_float32()
-        dr.eval(x)
-        sum_array += x
-        i += mi.UInt32(1)
-        dr.eval(i)
-    print(sum_array)
-    return sum_array
+    sum_array = accumulate_photon_beam_hat(beam_list, resolution, boundingbox, 0)
+    # print(type(sum_array))
+    save_grid_data(sum_array.numpy(), resolution+1, boundingbox, "test_beam_hat.npy", 'wb')
+    # return sum_array
     
 if __name__ == "__main__":
     # test_gradient_multi_1d(0, 200000)
@@ -598,7 +607,11 @@ if __name__ == "__main__":
     seed = 1990
     # v = np.zeros(1)
     # for i in range(12000):
-    two_sphere_get_spatial_gradient(200000, seed, 2)
+    # two_sphere_get_spatial_gradient(1, seed, 2)
     # print(v)
     # test_track_length(20000, 0.1, "18")
     # test_kernel(1000, 4)
+
+
+    # test beam hat
+    test_beams_hat(1, 5)
