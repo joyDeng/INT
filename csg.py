@@ -10,7 +10,7 @@ import struct
 import mitsuba as mi
 import drjit as dr
 from drjit.cuda import Float, Float64 as Float64, UInt32, UInt64, TensorXf, ArrayXu, ArrayXf, Bool, UInt, Array2u, Int
-from drjit.cuda.ad import Float64 as Float64D, UInt32 as UInt32D, Float as FloatD
+from drjit.cuda.ad import Float64 as Float64D, UInt32 as UInt32D, Float as FloatD, TensorXf as TensorXfD
 import numpy as np
 import torch
 import random
@@ -168,17 +168,24 @@ class SceneMaterial:
             self.node_shape_orders.append(UInt(shape_order))
         # exit(0)
 
+    def print_materials(self):
+        print("energy_groups: ", self.energy_groups)
+        print("cross_tot_list", self.cross_tot_list)
+        print("albedo", self.alb_tot_list)
+        print("pdf", self.pdf)
+        print("cdfs", self.cdfs)
+
     def init_multi_group_properties(self, number_of_energy_group, num_of_material):
         # store the properies as pytorch tensors
         # init sigmas and albedo
         # cross sections are two dimensional tensor with dim 0: material_id, dim 1: energy group id
         # should revise this to load from some dataset
         if self.energy_groups == 1:
-            self.cross_tot_list = TensorXf(torch.tensor(self.cross_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
-            self.alb_tot_list = TensorXf(torch.tensor(self.alb_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
+            self.cross_tot_list = TensorXfD(torch.tensor(self.cross_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
+            self.alb_tot_list = TensorXfD(torch.tensor(self.alb_tot_list, device='cuda:0', dtype=torch.float32).reshape(-1, 1))
         else:
-            self.cross_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
-            self.alb_tot_list = TensorXf(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
+            self.cross_tot_list = TensorXfD(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
+            self.alb_tot_list = TensorXfD(torch.zeros(self.num_material, self.energy_groups, device='cuda:0', dtype=torch.float32) + 1.0)
 
         # init phase function
         # phase function is a three dimensional tensor with dim 0: material_id, dim 1: incident energy group id, dim2 = exiting energy group id
@@ -204,14 +211,17 @@ class SceneMaterial:
         dr.make_opaque(self.cdfs)
 
     def get_sig(self, material_idx, energy_idx):
-        return dr.gather(Float, self.cross_tot_list.array, material_idx * self.energy_groups + energy_idx)
+        # print(type(self.cross_tot_list.array))
+        # exit(0)
+        return dr.gather(type(self.cross_tot_list.array), self.cross_tot_list.array,  material_idx * self.energy_groups + energy_idx)
 
     def get_alb(self, material_idx, energy_idx):
-        return dr.gather(Float, self.alb_tot_list.array, material_idx * self.energy_groups + energy_idx)
+        return dr.gather(type(self.alb_tot_list.array), self.alb_tot_list.array,  material_idx * self.energy_groups + energy_idx)
 
     def get_optical_properties(self, material_idx, energy_idx):
-        sig = dr.gather(Float, self.cross_tot_list.array, material_idx * self.energy_groups + energy_idx)
-        alb = dr.gather(Float, self.alb_tot_list.array, material_idx * self.energy_groups + energy_idx)
+        
+        sig = dr.gather(type(self.cross_tot_list.array), self.cross_tot_list.array, material_idx * self.energy_groups + energy_idx)
+        alb = dr.gather(type(self.alb_tot_list.array), self.alb_tot_list.array, material_idx * self.energy_groups + energy_idx)
 
         xid, yid  =  dr.meshgrid(dr.arange(UInt, self.energy_groups), dr.arange(UInt, dr.width(material_idx)))
         # print(type(material_idx), type(energy_idx))
@@ -222,6 +232,12 @@ class SceneMaterial:
         phase_cdf = dr.gather(Float, self.cdfs.array, query_idx)
         phase_cdf = dr.reshape(TensorXf, phase_cdf, (dr.width(material_idx), self.energy_groups))
 
+        # debug logs
+        # pidx = dr.compress(material_idx_scattered == 0)
+        # print("print idx", pidx)
+        # print("phase_cdf: ", phase_cdf[51], material_idx_scattered[51], energy_idx_scattered[51])
+        # exit(0)
+
         dr.make_opaque(sig, alb, phase_cdf)
         return sig, alb, phase_cdf
 
@@ -230,7 +246,46 @@ class SceneMaterial:
 
     def __repr__(self):
         return f"there are {len(self.csg_node_list)} materials in the scene"
+
+
+        # attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid, travel_trough_material_boundary = sample_and_compute_attenuation_along_ray(scene, 
+        #                                                           all_its, material_spaces, 
+        #                                                           ray_current, scm, 
+        #                                                           vertices_list, faces_list, rng, energy_group_idx, beams, bounceIdx, radiance / num_neutron, active, travel_trough_material_boundary, save_beam)
+        # terminate_ray = mask_invalid | exit_ray
+
+class IterProp:
+    def __init__(self, radiance, energy_group_idx, ray_current):
+        self.radiance = radiance
+        self.energy_group_idx
+        self.ray_current = ray_current
+
+class RayGeoIts:
+    def __init__(self, all_its, material_spaces, ray_current, vertices_list, faces_list):
+        self.all_its = all_its
+        self.material_space = material_spaces
+
+class SceneInfo:
+    def __init__(self, scm, scene, vertices_list, face_list, rng):
+        self.scm = scm
+        self.scene = scene
+        self.vertices_list = vertices_list
+        self.face_list = face_list
+        self.rng = rng
+
+class AttenSample:
+    def __init__(self, attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid):
+        self.attenuation = attenuation
+        self.reparam_factor = reparam_factor
+        self.attenuation_till_scatter = attenuation_till_scatter
+        self.pdf = pdf
+        self.scatter_pos = scatter_pos
+        self.feature = feature
+        self.exit_ray = exit_ray
+        self.mask_invalid = mask_invalid
     
+
+
 def test_multi_energy_sigma_t(num_group):
     shape0 = CSGLeaf(0)
     shape1 = CSGLeaf(1)
@@ -460,7 +515,6 @@ def get_material_space_along_ray(its, its_inv, scm, ray_num, ray_dir):
     """
     geo_state_list = []
     init_state_dr = dr.zeros(TensorXf, shape=[ray_num, scm.num_geo])
-
 
     for intersect in its:
         it = intersect[0]
@@ -745,7 +799,10 @@ def test_tracklength_1D(bounce_a, sigma_t, number_neutron, resolution, length):
 def less_or_equal_to(a, b):
     left, right = FloatD(a), FloatD(b)
     smaller = left < right
-    equal = left == right
+    # print(dr.abs(left - right), dr.epsilon(type(left)))
+    
+    equal = dr.abs(left - right) < dr.epsilon(type(left)) * 10.0
+    # print(" equal: ", equal, " left ", left, " right: ", right, " smaller: ", smaller)
     return equal | smaller       
 
 def in_rage_c(l, x, r):
@@ -772,16 +829,25 @@ class Beams():
         F = dr.exp(multiply) 
         self.color = FloatD(F / dr.detach(F) * color)
         self.bounceIdx = dr.zeros(Int, self.num_beams) + bounceIdx        
+        
         # init material related
         self.cross_section = dr.zeros(FloatD, self.num_beams)
         self.albedo = dr.zeros(FloatD, self.num_beams)
-        # print("construct", type(self.cross_section), length)
         self.collision = dr.cuda.ad.Bool(collision)
         
 
     def set_material(self, cross_section, albedo, detach_mask):
         self.cross_section = dr.zeros(FloatD, self.num_beams) + cross_section
         self.albedo = dr.zeros(FloatD, self.num_beams) + albedo
+
+    def save_before_compress(self, file):
+        valid_mask = dr.compress(self.active).numpy()
+        start = self.start.numpy()
+        end = self.end.numpy()
+        np.save("start_" + file, start)
+        np.save("end_" + file, end)
+        np.save(file, valid_mask)
+        
 
     def compress(self):
         valid_mask = dr.compress(self.active)
@@ -819,7 +885,6 @@ class Beams():
         self.start              = concat_point(self.start, c.start)
         self.end                = concat_point(self.end, c.end)
         self.dir                = concat_point(self.dir, c.dir)
-        # print("width", dr.width(self.length), type(self.length), dr.width(c.length), type(c.length))
 
         self.length             = dr.concat([self.length, c.length])
         self.active             = dr.concat([self.active, c.active])
@@ -850,9 +915,7 @@ class Beams():
         end = mi.Point3f(self.end)
         inside_start = in_rage_c(bl.x, start.x, tr.x) & in_rage_c(bl.y, start.y, tr.y) & in_rage_c(bl.z, start.z, tr.z)
         inside_end = in_rage_c(bl.x, end.x, tr.x) & in_rage_c(bl.y, end.y, tr.y) & in_rage_c(bl.z, end.z, tr.z)
-        bdir = mi.Vector3f(self.dir)
-
-        
+        bdir = mi.Vector3f(self.dir)        
 
         d_tx_left = (bl.x - start.x) / bdir.x
         d_tx_right = (tr.x - start.x) / bdir.x
@@ -882,7 +945,6 @@ class Beams():
         intersection_count += dr.select(tzb_valid, mi.UInt32(1), mi.UInt32(0))
         intersection_count += dr.select(tzf_valid, mi.UInt32(1), mi.UInt32(0))
 
-        
 
         distance_min = dr.select(txl_valid & txr_valid, dr.select(d_tx_right < d_tx_left, d_tx_right, d_tx_left), dr.select(txl_valid, d_tx_left, dr.select(txr_valid, d_tx_right, FloatD(dr.inf))))
         distance_min = dr.select(tyb_valid & (d_ty_bot < distance_min), d_ty_bot, distance_min)
@@ -901,17 +963,23 @@ class Beams():
         exit_step_z = dr.select( bdir.z < FloatD(0.0), dr.select(tzb_valid, mi.Int(-1), mi.Int(0)), dr.select((bdir.z > FloatD(0.0)) & tzf_valid, mi.Int(1), mi.Int(0)))
         exit_step = mi.Vector3i(exit_step_x, exit_step_y, exit_step_z)
 
+        # print(" intersect min: ", " intersect max: ", distance_min, distance_max)
         distance = distance_max - distance_min
         distance = dr.select(intersection_count == mi.UInt32(1), dr.select(inside_start, distance_min, dr.select(inside_end, self.length - distance_min, FloatD(0.0))), distance)
+        # print(" distance: ", distance)
 
-        zero_distance = ((bl.x > start.x) & (bl.x > self.end.x)) | ((tr.x < start.x) & (tr.x < self.end.x))
-        zero_distance |= ((bl.y > start.y) & (bl.y > self.end.y)) | ((tr.y < start.y) & (tr.y < self.end.y))
-        zero_distance |= ((bl.z > start.z) & (bl.z > self.end.z)) | ((tr.z < start.z) & (tr.z < self.end.z))
+        # zero_distance = ((bl.x > start.x) & (bl.x > end.x)) | ((tr.x < start.x) & (tr.x < end.x))
+        # print("zero distance: ", zero_distance)
+        # zero_distance |= ((bl.y > start.y) & (bl.y > end.y)) | ((tr.y < start.y) & (tr.y < end.y))
+        # print("zero distance: ", zero_distance)
+        # zero_distance |= ((bl.z > start.z) & (bl.z > end.z)) | ((tr.z < start.z) & (tr.z < end.z))
+        # print("zero distance: ", zero_distance)
 
-        distance = dr.select(zero_distance | (intersection_count == mi.UInt32(0)), FloatD(0.0), distance)
+        distance = dr.select((intersection_count == mi.UInt32(0)), FloatD(0.0), distance)
         distance = dr.select(inside_end & inside_start, self.length, distance)
 
         distance_32 = dr.select(self.active, distance, FloatD(0.0))
+        # print(" active ", self.active, distance_32, distance, "zero distance: ", zero_distance)
 
         enter_point = start + distance_min * self.dir
         exit_point = start + distance_max * self.dir
@@ -921,7 +989,7 @@ class Beams():
 
         # print(" enter point: ", enter_point, " exit_point ", exit_point, " length: ", distance_32)
         
-        return distance_32, exit_step, dr.detach(enter_point), dr.detach(exit_point)
+        return distance_32, exit_step, enter_point, exit_point
 
     def intersect3D(self, bl, tr):
         """RETURN distance that the beam traveled in the 3D bounding box bl-tr
@@ -962,18 +1030,11 @@ class Beams():
         ptzb = d_tz_back * bdir + start
         ptzf = d_tz_front * bdir + start
 
-
-        # txl_valid = (ptxl.y >= bl.y) & (ptxl.y <= tr.y) & (ptxl.z >= bl.z) & (ptxl.z <= tr.z) & (d_tx_left >= 0.0) & (d_tx_left < self.length)
         txl_valid = in_rage_c(bl.y, ptxl.y, tr.y) & in_rage_c(bl.z, ptxl.z, tr.z) & in_rage_c(0.0, d_tx_left, self.length)
-        # txr_valid = (ptxr.y >= bl.y) & (ptxr.y <= tr.y) & (ptxr.z >= bl.z) & (ptxr.z <= tr.z) & (d_tx_right >= 0.0) & (d_tx_right < self.length)
         txr_valid = in_rage_c(bl.y, ptxr.y, tr.y) & in_rage_c(bl.z, ptxr.z, tr.z) & in_rage_c(0.0, d_tx_right, self.length)
-        # tyb_valid = (ptyb.x >= bl.x) & (ptyb.x <= tr.x) & (ptyb.z >= bl.z) & (ptyb.z <= tr.z) & (d_ty_bot >= 0.0) & (d_ty_bot < self.length)
         tyb_valid = in_rage_c(bl.x, ptyb.x, tr.x) & in_rage_c(bl.z, ptyb.z, tr.z) & in_rage_c(0.0, d_ty_bot, self.length)
-        # tyt_valid = (ptyt.x >= bl.x) & (ptyt.x <= tr.x) & (ptyt.z >= bl.z) & (ptyt.z <= tr.z) & (d_ty_top >= 0.0) & (d_ty_top < self.length)
         tyt_valid = in_rage_c(bl.x, ptyt.x, tr.x) & in_rage_c(bl.z, ptyt.z, tr.z) & in_rage_c(0.0, d_ty_top, self.length)
-        # tzb_valid = (ptzb.y >= bl.y) & (ptzb.y <= tr.y) & (ptzb.x >= bl.x) & (ptzb.x <= tr.x) & (d_tz_back >= 0.0) & (d_tz_back < self.length)
         tzb_valid = in_rage_c(bl.y, ptzb.y, tr.y) & in_rage_c(bl.x, ptzb.x, tr.x) & in_rage_c(0.0, d_tz_back, self.length)
-        # tzf_valid = (ptzf.y >= bl.y) & (ptzf.y <= tr.y) & (ptzf.x >= bl.x) & (ptzf.x <= tr.x) & (d_tz_front >= 0.0) & (d_tz_front < self.length)
         tzf_valid = in_rage_c(bl.y, ptzf.y, tr.y) & in_rage_c(bl.x, ptzf.x, tr.x) & in_rage_c(0.0, d_tz_front, self.length)
 
 
@@ -1007,11 +1068,11 @@ class Beams():
         distance = distance_max - distance_min
         distance = dr.select(intersection_count == mi.UInt32(1), dr.select(inside_start, distance_min, dr.select(inside_end, self.length - distance_min, FloatD(0.0))), distance)
 
-        zero_distance = ((bl.x > start.x) & (bl.x > self.end.x)) | ((tr.x < start.x) & (tr.x < self.end.x))
-        zero_distance |= ((bl.y > start.y) & (bl.y > self.end.y)) | ((tr.y < start.y) & (tr.y < self.end.y))
-        zero_distance |= ((bl.z > start.z) & (bl.z > self.end.z)) | ((tr.z < start.z) & (tr.z < self.end.z))
+        # zero_distance = ((bl.x > start.x) & (bl.x > self.end.x)) | ((tr.x < start.x) & (tr.x < self.end.x))
+        # zero_distance |= ((bl.y > start.y) & (bl.y > self.end.y)) | ((tr.y < start.y) & (tr.y < self.end.y))
+        # zero_distance |= ((bl.z > start.z) & (bl.z > self.end.z)) | ((tr.z < start.z) & (tr.z < self.end.z))
 
-        distance = dr.select(zero_distance | (intersection_count == mi.UInt32(0)), FloatD(0.0), distance)
+        distance = dr.select((intersection_count == mi.UInt32(0)), FloatD(0.0), distance)
         distance = dr.select(inside_end & inside_start, self.length, distance)
 
         distance_32 = dr.select(self.active, distance, FloatD(0.0))
@@ -1133,16 +1194,19 @@ def save_grid_data(voxel, resolution, boundingbox, filename, mode):
     # print(stepsize)
     # exit(0)
     # print(resolution)
-    reso = resolution.numpy().reshape(-1)
-    print(reso, resolution)
+    dim = int(np.round(np.power(voxel.shape[0], 1/3)))
+    # print(dim,dim.shape)
+    # print("one dimension", dim, dr.power(voxel.shape[0], 1/3))
+    # reso = resolution.numpy().reshape(-1)
+    # print(reso, resolution)
     
-    np.save(filename.split('.')[-2] + "_numpy.npy", voxel.reshape(reso))
+    np.save(filename.split('.')[-2] + "_numpy.npy", voxel.reshape(dim, dim, dim))
 
     with open(filename, mode) as newFile:
         # shapes = voxel.shape
-        newFile.write(struct.pack('i', reso[0]))
-        newFile.write(struct.pack('i', reso[1]))
-        newFile.write(struct.pack('i', reso[2]))
+        newFile.write(struct.pack('i', dim))
+        newFile.write(struct.pack('i', dim))
+        newFile.write(struct.pack('i', dim))
         for i in range(3):
             newFile.write(struct.pack('f', stepsize[i]))
 

@@ -1,0 +1,53 @@
+ ==================>     TALLY 780: LEAKAGE_CURRENT     <===================
+
+ Surface 1560
+   Collision Number 0
+     Incoming Energy [0, 100000)
+       Total Material
+         Current                              0 +/- 0
+     Incoming Energy [100000, 1000000)
+       Total Material
+         Current                              0 +/- 0
+     Incoming Energy [1000000, 20000000)
+       Total Material
+         Current                              0.0225679 +/- 3.53596e-05
+   Collision Number 1
+     Incoming Energy [0, 100000)
+       Total Material
+         Current                              0.0019782 +/- 1.05147e-05
+     Incoming Energy [100000, 1000000)
+       Total Material
+         Current                              0.0437217 +/- 6.08852e-05
+     Incoming Energy [1000000, 20000000)
+       Total Material
+         Current                              0.013368 +/- 2.72304e-05
+   Collision Number 2
+     Incoming Energy [0, 100000)
+       Total Material
+         Current                              0.0268637 +/- 4.81848e-05
+     Incoming Energy [100000, 1000000)
+       Total Material
+         Current                              0.0278667 +/- 4.62371e-05
+     Incoming Energy [1000000, 20000000)
+       Total Material
+         Current                              0.00807733 +/- 2.02508e-05
+   Collision Number 3
+     Incoming Energy [0, 100000)
+       Total Material
+         Current                              0.0378305 +/- 4.77102e-05
+     Incoming Energy [100000, 1000000)
+       Total Material
+         Current                              0.0140151 +/- 3.52529e-05
+     Incoming Energy [1000000, 20000000)
+       Total Material
+         Current                              0.00456747 +/- 1.72574e-05
+   Collision Number 4
+     Incoming Energy [0, 100000)
+       Total Material
+         Current                              0.0376933 +/- 4.0415e-05
+     Incoming Energy [100000, 1000000)
+       Total Material
+         Current                              0.0063562 +/- 2.05401e-05
+     Incoming Energy [1000000, 20000000)
+       Total Material
+         Current                              0.00248013 +/- 1.36024e-05
