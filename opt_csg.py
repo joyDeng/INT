@@ -220,7 +220,7 @@ def opt_energy_dependent_two_layers(iteration_count, nuetron_number):
 
         
         # scene, rng, scm, vertices_list, faces_list, ray_current,  number_of_energy_group, reparam
-        energy = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True)
+        energy = render_nuetron_in_csg_shape_energy_dependent(SceneInfo(scene, rng, scm, vertices_list, faces_list), ray_current, True)
         # level_0 = dr.gather(FloatD, energy, UInt(0))
         level_0 = dr.sum(energy)
         dr.eval(level_0)

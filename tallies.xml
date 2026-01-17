@@ -1,16 +1,16 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <tallies>
-  <filter id="2338" type="surface">
-    <bins>1560</bins>
+  <filter id="58" type="surface">
+    <bins>60</bins>
   </filter>
-  <filter id="2339" type="collision">
+  <filter id="59" type="collision">
     <bins>0 1 2 3 4</bins>
   </filter>
-  <filter id="2340" type="energy">
+  <filter id="60" type="energy">
     <bins>0.0 100000.0 1000000.0 20000000.0</bins>
   </filter>
-  <tally id="780" name="leakage_current">
-    <filters>2338 2339 2340</filters>
+  <tally id="20" name="leakage_current">
+    <filters>58 59 60</filters>
     <scores>current</scores>
   </tally>
 </tallies>

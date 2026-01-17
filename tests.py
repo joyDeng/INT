@@ -1,6 +1,90 @@
-from area_tally import *
+from simulator import *
 from csg import save_grid_data
 from constant import DATA_DIR
+
+def load_scene_and_sensor(params):
+    scene_dict = {
+        'type': 'scene',
+        'A': {
+            'id': 'A',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().scale([1.0, 1.0, 1.0]),
+            'filename': f"{DATA_DIR}/scene/sphere_radius_1.obj",
+            'bsdf': {'type': 'diffuse',
+                    'reflectance': {
+                    'type': 'rgb',
+                    'value': [0.2, 0.25, 0.7]
+                },
+            }
+        },
+        'B': {
+            'id': 'B',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().scale([3.0, 3.0, 3.0]),
+            'filename': f"{DATA_DIR}/scene/sphere_radius_1.obj",
+            'bsdf': {'type': 'diffuse',
+                    'reflectance': {
+                    'type': 'rgb',
+                    'value': [0.23, 0.25, 0.7]
+                },
+            }
+        },
+    }
+    scene = mi.load_dict(scene_dict)
+    # print(scene)
+    shape0 = CSGLeaf(0)
+    shape1 = CSGLeaf(1)
+
+    m1 = CSGNode("intersection", shape0, shape1)
+    m2 = CSGNode("difference", shape0, shape1)
+
+    scm = SceneMaterial([m1, m2], [[FloatD(0.9), FloatD(0.9)]], [[0.8, 0.8]], 2, 3)
+    scm.set_material_sigma(TensorXfD(params["sig_t"]))
+    scm.set_material_ald(TensorXfD(params["albedo"]))
+    phase_function = TensorXf([
+        params["phase"]
+    ])
+    
+    scm.set_phase_function(phase_function)
+
+    sensor_dict = {
+        'type': 'scene',
+        # 'plane': {
+        # 'type': 'rectangle',
+        # 'to_world': mi.ScalarTransform4f.translate([0.0, 0.0, -0.2]) @ mi.ScalarTransform4f.scale([0.5, 0.5, 1.0]),
+        # 'bsdf': {
+        #     'type': 'diffuse',
+        #     'reflectance': {
+        #         'type': 'rgb',
+        #         'value': [0.8, 0.8, 0.8]
+        #         }
+        #     },
+        # "emitter": {
+        #         "type": "area",
+        #         "radiance": {"type": "rgb", "value": [30.0, 30.0, 30.0]},
+        #     },
+        # }
+         "mesh_emitter": {
+            "type": "obj",
+            "filename": f"{DATA_DIR}/scene/sphere_radius_1.obj",
+
+            # Optional transforms (uncomment/tune as needed)
+            "to_world":  mi.ScalarTransform4f.translate([1.0, 1.0, 1.0]) @ mi.ScalarTransform4f.scale([0.05, 0.05, 0.05]),
+            
+
+            # You can still attach a BSDF (useful for importance / consistency)
+            "bsdf": {"type": "diffuse", "reflectance": 0.0},
+
+            # Turn the mesh into an area emitter
+            "emitter": {
+                "type": "area",
+                "radiance": {"type": "rgb", "value": [30.0, 30.0, 30.0]},
+            },
+        },
+    }
+    
+    sensor = mi.load_dict(sensor_dict)
+    return scene, scm, sensor
 
 def load_test_scene_heat():
     scene_dict = {
@@ -303,8 +387,8 @@ def delta_emission(scene, scm, num_neutrons, seed, Va, AD):
     vertices_list = [Va, Vb]
     faces_list = [Fa, Fb]
 
-    
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, AD) 
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, AD) 
     # print("out", Etot)
     return Etot
 
@@ -550,8 +634,8 @@ def test_track_length(num_neutrons, theta, file_id, es="tr"):
 
 
 
-
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True, beam_list) 
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True, beam_list) 
 
     
     for b in beam_list:    
@@ -615,6 +699,203 @@ def load_exp1_sphere_openmc_multi_group(params):
     
     return scene, scm
 
+
+def load_exp1_torus_openmc_multi_group(params):
+    scene_dict = {
+        'type': 'scene',
+        'A': {
+            'id': 'A',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().scale([1.0, 1.0, 1.0]),
+            'filename': f"{DATA_DIR}/scene/torus_radius_1_section_radius_onethird.obj",
+            'bsdf': {'type': 'diffuse',
+                    'reflectance': {
+                    'type': 'rgb',
+                    'value': [0.2, 0.25, 0.7]
+                },
+            }
+        },
+        'B': {
+            'id': 'B',
+            'type': 'obj',
+            'to_world': mi.ScalarTransform4f().scale([1.0, 1.0, 1.0]),
+            'filename': f"{DATA_DIR}/scene/torus_radius_1_section_radius_half.obj",
+            'bsdf': {'type': 'diffuse',
+                    'reflectance': {
+                    'type': 'rgb',
+                    'value': [0.23, 0.25, 0.7]
+                },
+            }
+        },
+    }
+    scene = mi.load_dict(scene_dict)
+    # print(scene)
+    shape0 = CSGLeaf(0)
+    shape1 = CSGLeaf(1)
+
+    m1 = CSGNode("intersection", shape0, shape1)
+    m2 = CSGNode("difference", shape0, shape1)
+
+    scm = SceneMaterial([m1, m2], [[FloatD(0.9), FloatD(0.9)]], [[0.8, 0.8]], 2, 3)
+    scm.set_material_sigma(TensorXfD(params["sig_t"]))
+    scm.set_material_ald(TensorXfD(params["albedo"]))
+    phase_function = TensorXf([
+        params["phase"]
+    ])
+    
+    scm.set_phase_function(phase_function)
+
+    scm.print_materials()
+    
+    return scene, scm
+
+def two_sphere_multi_energy_sensor(num_neutrons, param_dict, seed):
+    G = 3
+    group_edges = [0.0, 1.0e5, 1.0e6, 2.0e7]  # eV
+
+    sig_t_shell = [FloatD(0.9), FloatD(0.9), FloatD(0.9)]
+    albedo_shell = [0.8 / 0.9, 0.8 / 0.9, 0.8 / 0.9]
+
+    # sig_s[g_out, g_in]
+    Phase_shell = np.array([
+        [0.75, 0.125, 0.125],
+        [0.00, 0.50, 0.50],
+        [0.00, 0.00, 1.00],
+    ])
+
+    sig_t_inner = [param_dict["sig_t"], FloatD(0.8), FloatD(0.8)]
+    albedo_inner = [0.7, 0.7, 0.7]
+    Phase_inner =  np.array([
+        [0.10, 0.90, 0.00],
+        [0.00, 0.50, 0.50],
+        [0.00, 0.00, 1.00],
+    ])
+
+    params = {}
+    params["sig_t"] = TensorXfD([sig_t_inner, sig_t_shell])
+    params["albedo"] = [albedo_inner, albedo_shell]
+    params["phase"] = [Phase_inner, Phase_shell]
+
+    scene, scm, sensor = load_scene_and_sensor(params)
+
+
+    dr.make_opaque(seed)
+    rng = mi.PCG32(size=num_neutrons, initstate=seed)
+    dr.make_opaque(rng)
+    radius_scale = param_dict["geo"]
+
+    # point light
+    ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
+    random_cos = sample_float_32(rng) * 2.0 - 1.0
+    random_sin = dr.sqrt(1.0 - random_cos * random_cos)
+    phi = sample_float_32(rng) * 2.0 * dr.pi
+    ray_vec.x += random_sin * dr.cos(phi)
+    ray_vec.y += random_sin * dr.sin(phi)
+    ray_vec.z += random_cos
+
+    ray_current = mi.Ray3f(ray_origin, ray_vec)
+    dr.make_opaque(ray_current)
+    params = mi.traverse(scene)
+    aV = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+
+    aV.y = aV.y * radius_scale
+    aV.x = aV.x * radius_scale
+    aV.z = aV.z * radius_scale
+    params['A.vertex_positions'] = dr.ravel(aV)
+    
+    
+    dr.enable_grad(params['A.vertex_positions'])
+    dr.enable_grad(params['B.vertex_positions'])
+    params.update()
+    
+    Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
+    
+    Fa = dr.unravel(mi.Vector3i, mi.Int(params[f'A.faces']))
+    Fb = dr.unravel(mi.Vector3i, mi.Int(params[f'B.faces']))
+
+    vertices_list = [Vb, Va]
+    faces_list = [Fb, Fa]
+
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list, sensor)
+    Etot = render_neutron_in_csg_shape_energy_dependent_with_sensor(sceneinfo, ray_current, True)
+
+    # print("returns", Etot.shape, " \nvalues: ", Etot)
+    return Etot
+
+def two_torus_multi_energy(num_neutrons, param_dict, seed):
+    # Row out_going, Column in_going
+    G = 3
+    group_edges = [0.0, 1.0e5, 1.0e6, 2.0e7]  # eV
+
+    sig_t_shell = [FloatD(0.9), FloatD(0.9), FloatD(0.9)]
+    albedo_shell = [0.8 / 0.9, 0.8 / 0.9, 0.8 / 0.9]
+
+    # sig_s[g_out, g_in]
+    Phase_shell = np.array([
+        [0.75, 0.125, 0.125],
+        [0.00, 0.50, 0.50],
+        [0.00, 0.00, 1.00],
+    ])
+
+    sig_t_inner = [param_dict["sig_t"], FloatD(0.8), FloatD(0.8)]
+    albedo_inner = [0.7, 0.7, 0.7]
+    Phase_inner =  np.array([
+        [0.10, 0.90, 0.00],
+        [0.00, 0.50, 0.50],
+        [0.00, 0.00, 1.00],
+    ])
+
+    params = {}
+    params["sig_t"] = TensorXfD([sig_t_inner, sig_t_shell])
+    params["albedo"] = [albedo_inner, albedo_shell]
+    params["phase"] = [Phase_inner, Phase_shell]
+
+    scene, scm = load_exp1_torus_openmc_multi_group(params)
+
+
+    dr.make_opaque(seed)
+    rng = mi.PCG32(size=num_neutrons, initstate=seed)
+    dr.make_opaque(rng)
+    offset_y = param_dict["geo"]
+
+    # point light
+    ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
+    random_cos = sample_float_32(rng) * 2.0 - 1.0
+    random_sin = dr.sqrt(1.0 - random_cos * random_cos)
+    phi = sample_float_32(rng) * 2.0 * dr.pi
+    ray_vec.x += random_sin * dr.cos(phi)
+    ray_vec.y += random_sin * dr.sin(phi)
+    ray_vec.z += random_cos
+
+    ray_current = mi.Ray3f(ray_origin, ray_vec)
+    dr.make_opaque(ray_current)
+    params = mi.traverse(scene)
+    aV = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    # aN = dr.unravel(mi.Vector3f, params['.vertex_normals'])
+
+    aV.y = aV.y + offset_y
+    params['A.vertex_positions'] = dr.ravel(aV)
+    
+    
+    dr.enable_grad(params['A.vertex_positions'])
+    dr.enable_grad(params['B.vertex_positions'])
+    params.update()
+    
+    Va = dr.unravel(mi.Point3f, params['A.vertex_positions'])
+    Vb = dr.unravel(mi.Point3f, params['B.vertex_positions'])
+    
+    Fa = dr.unravel(mi.Vector3i, mi.Int(params[f'A.faces']))
+    Fb = dr.unravel(mi.Vector3i, mi.Int(params[f'B.faces']))
+
+    vertices_list = [Vb, Va]
+    faces_list = [Fb, Fa]
+
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True)
+
+    # print("returns", Etot.shape, " \nvalues: ", Etot)
+    return Etot
 
 def two_sphere_multi_energy(num_neutrons, param_dict, seed):
     # Row out_going, Column in_going
@@ -702,7 +983,8 @@ def two_sphere_multi_energy(num_neutrons, param_dict, seed):
     vertices_list = [Vb, Va]
     faces_list = [Fb, Fa]
 
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True)
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True)
 
     # print("returns", Etot.shape, " \nvalues: ", Etot)
     return Etot
@@ -753,7 +1035,8 @@ def two_sphere_radius(num_neutrons, param_dict, seed):
     vertices_list = [Vb, Va]
     faces_list = [Fb, Fa]
 
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True)
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True)
     return Etot
 
 
@@ -808,13 +1091,15 @@ def two_torus_offset(num_neutrons, param_dict, seed):
     vertices_list = [Vb, Va]
     faces_list = [Fb, Fa]
 
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True)
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True)
     return Etot
 
 function_dict = {
     "sphere": two_sphere_radius,
     "torus": two_torus_offset,
     "sphere_multi": two_sphere_multi_energy,
+    "torus_multi": two_torus_multi_energy
 }
 
 
@@ -974,7 +1259,8 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
     faces_list = [Fb, Fa]
     beam_list = []
 
-    Etot = render_nuetron_in_csg_shape_energy_dependent(scene, rng, scm, vertices_list, faces_list, ray_current, True, beam_list, True) 
+    sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list)
+    Etot = render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, True, beam_list, True) 
     
     if es == "tr":
         # i = 0
@@ -1085,7 +1371,21 @@ def uncertainty_f(geo_offset, ad=True):
         del Etot
     return val, grad
 
+def valid_sensor(N, hight):
+    x, y = (np.random.rand(N) - 0.5), (np.random.rand(N) - 0.5)
+    pdf = 1
+    distance_sqr = (np.power(x, 2.0) + np.power(y, 2.0) + hight * hight)
+    distance = np.sqrt(distance_sqr)
+    tr = np.exp(-0.9 * distance)
+    cos_theta = hight / distance 
+    
+    energy = np.sum(INV_FOUR_PI * tr * cos_theta / distance_sqr / pdf) / N
+    print("energy collected: ", energy)
+
+
 if __name__ == "__main__":
+    # valid_sensor(5000000, 0.2)
+    # exit(0)
     # test_gradient_multi_1d(0, 200000)
     # test_2cubes(400000)
     # test_hemisphere_range()
@@ -1100,14 +1400,24 @@ if __name__ == "__main__":
 
     # test beam hat
     # test_beams_hat(1, 120)
-    num_neutrons = 1000000
+    num_neutrons = 2000000
     param_range = [0.1, 2.0]
     torus_scale_range = [-0.195, 0.195]
     sphere_scale_range = [0.1, 2.0]
     albedo_range = [0.8, 0.995]
+    N = 10
 
+    # Etot = []
+    # for i in range(N):
+    #     e = two_sphere_multi_energy_sensor(num_neutrons, {"geo": 1.0, "sig_t": FloatD(0.9)}, 1994 + i)
+    #     Etot.append(e.numpy())
+    #     del e
+    # Etot = np.mean(np.array(Etot), axis=0)
+    # print("Etot: ", Etot)
+    
+    # exit(0)
     steps = 25
-    N = 2
+    
     # test_radius_gradient(num_neutrons, radius_range, steps)
 
     # test sig_t
@@ -1119,8 +1429,8 @@ if __name__ == "__main__":
     #     "sig_t": 0.1,
     #     "albedo": 0.9
     # }
-    sig_t_range = [0.1, 2.0]
-    test_parameter_gradient_multi(num_neutrons, sig_t_range, steps, "sphere", "sig_t", {"geo": 1.0, "sit_t": 0.1}, N, id=3)
+    # sig_t_range = [0.1, 2.0]
+    test_parameter_gradient_multi(num_neutrons, torus_scale_range, steps, "torus", "geo", {"geo": 0.0, "sig_t": FloatD(0.9)}, N, id=2)
     
     # test load the parameters for multi energy groups
     # two_sphere_multi_energy(num_neutrons, {"geo": 0.5}, 1994)

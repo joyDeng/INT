@@ -215,6 +215,110 @@ def load_data_ad(name):
     values_error = np.load(f"{name}_ad_values_errors.npy")
     return values, gradient, values_error, gradient_error
 
+from constant import TEMP_DIR
+
+def sliding_window_mean(values: np.ndarray, window: int = 10):
+    """
+    Centered sliding window mean.
+    values: (N, G)
+    returns: (N, G)
+    """
+    N, G = values.shape
+    half = window // 2
+
+    out = np.empty_like(values, dtype=np.float64)
+    for i in range(N):
+        lo = max(0, i - half)
+        hi = min(N, i + half + 1)
+        out[i] = values[lo:hi].mean(axis=0)
+    return out
+
+
+def plot_saved_sensor_data_windowed(
+    value_file=TEMP_DIR + "opt_sensor_loss.npy",
+    r_file=TEMP_DIR + "opt_sensor_rs.npy",
+    out_file="sensor_opt_window_.png",
+    window: int = 100,
+    plot_raw: bool = False,   # set True if you want raw + smoothed
+):
+    values = np.load(value_file)  # (N, G)
+    r_values = np.load(r_file)
+    if values.ndim != 2:
+        raise ValueError(f"Expected 2D arrays (N, G). Got {values.shape}")
+
+    N, G = values.shape
+    x = np.arange(N)
+
+    smoothed = sliding_window_mean(values, window=window)
+    r_smoothed = sliding_window_mean(r_values, window=window)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, sharex=True, figsize=(12.5, 6))
+
+    cmap = plt.get_cmap("cividis")
+    colors = cmap(np.linspace(0.25, 0.85, G))
+
+    for g in range(G):
+        if plot_raw:
+            ax1.plot(
+                x, values[:, g],
+                linestyle="--", linewidth=1, alpha=0.35,
+                color=colors[g],
+                label=None if g else "Raw",
+            )
+
+        ax1.plot(
+            x, smoothed[:, g] - 0.99,
+            "o-", linewidth=2, markersize=4,
+            color=colors[g],
+            label=f"Group {g+1}",
+        )
+
+    for g in range(G):
+        if plot_raw:
+            ax2.plot(
+                x, r_values[:, g],
+                linestyle="--", linewidth=1, alpha=0.35,
+                color=colors[g],
+                label=None if g else "Raw",
+            )
+
+        ax2.plot(
+            x, r_smoothed[:, g] * 1.1 * 0.1,
+            "o-", linewidth=2, markersize=4,
+            color=colors[g],
+            label=f"Group {g+1}",
+        )
+
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel(f"Sensor value (moving avg, window={window})")
+    ax1.legend(title="Energy group")
+    ax1.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(out_file, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+def plot_value_sensor():
+    values, xs = np.load("sensor_opt_value.npy"), np.load("sensor_opt_rs.npy")
+
+    fig, (ax1) = plt.subplots(
+        1, 1, sharex=True, figsize=(6, 6)
+    )
+
+    ax1.plot(
+        xs,
+        values,
+        "--s",
+        linewidth=2,
+        markersize=4,
+        # color=mts_ad,
+        label="values",
+    )
+
+    plt.tight_layout()
+    plt.savefig(f"opt_sensor_values.png", bbox_inches="tight")
+    plt.close(fig)
+    
 
 def plot_with_errors(name):
     xs, values, gradient, gradient_errors, val_errors = load_data_fd(name)
@@ -303,7 +407,7 @@ def plot_with_errors(name):
     plt.savefig(f"{name}_gradient.png", bbox_inches="tight")
     plt.close(fig)
 
-def plot_with_errors_multiple_energy(name):
+def plot_with_errors_multiple_energy(name, param):
     xs, values, gradient, gradient_errors_fd, values_error_fd = load_data_fd(name)
     values_ad, gradient_ad, values_error, gradient_errors_ad = load_data_ad(name)
 
@@ -353,11 +457,14 @@ def plot_with_errors_multiple_energy(name):
     fig, (ax1, ax2) = plt.subplots(1, 2, sharex=True, figsize=(12, 6))
 
     # Use a color-blind friendly colormap; pick distinct colors for each group
-    cmap = plt.get_cmap("inferno")
+    cmap = plt.get_cmap("Reds")
+    cmap_2 = plt.get_cmap("Blues")
     if 2 * G == 1:
         colors = [cmap(0.6)]
+        colors2 = [cmap_2(0.6)]
     else:
-        colors = [cmap(t) for t in np.linspace(0.1, 0.9, 2 * G)]
+        colors = [cmap(t) for t in np.linspace(0.45, 0.95, 2 * G)]
+        colors2 = [cmap_2(t) for t in np.linspace(0.45, 0.95, 2 * G)]
 
     # --- Value plot: one curve per energy group ---
     for g in range(G):
@@ -379,12 +486,12 @@ def plot_with_errors_multiple_energy(name):
             markerfacecolor='none',
             linewidth=2,
             markersize=7,
-            color=colors[g * 2+1],
+            color=colors2[g * 2],
             alpha=0.6,
             label=f"Ours g-{g+1}"
         )
     ax1.set_ylabel("Value of Energy Leakage")
-    ax1.set_xlabel("Radius of Inner Sphere")
+    ax1.set_xlabel(f"{param} of Inner Shape")
     # ax1.legend(title="Energy group", ncol=min(G, 3))
     ax1.grid(True, alpha=0.3)
 
@@ -412,11 +519,11 @@ def plot_with_errors_multiple_energy(name):
             markersize=7,
             markerfacecolor='none',
             capsize=4,
-            color=colors[g * 2+1],
+            color=colors2[g * 2],
             alpha=0.6,
             label=f"Ours g-{g+1}",
         )
-    ax2.set_xlabel("Sig_t of Inner Sphere")
+    ax2.set_xlabel(f"{param} of Inner Shape")
     ax2.set_ylabel("Gradient")
     # ax2.legend(title="Energy group", ncol=min(G, 3))
     ax2.grid(True, alpha=0.3)
@@ -440,4 +547,10 @@ if __name__ == "__main__":
     # visualize_two(2)
     # visualize_test()
     # debug_beam(2)
-    plot_with_errors_multiple_energy("sphere_sig_t_multi_3")
+    # plot_with_errors_multiple_energy("torus_geo_multi_2", "offset")
+    # plot_with_errors_multiple_energy("torus_sig_t_multi_2", "sig_t")
+    # plot_with_errors_multiple_energy("sphere_sig_t_multi_3", "sig_t")
+    # plot_with_errors_multiple_energy("sphere_geo_multi_3", "radius")
+
+    # plot_value_sensor()
+    plot_saved_sensor_data_windowed()

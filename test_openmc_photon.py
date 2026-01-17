@@ -46,7 +46,7 @@ def build_and_run_torus(param_set, SOURCE_E_EV, PARTICLES, seed_value):
     # make_1group_mgxs(tot_cs_dense * 2.0, tot_cs_dense * (1.0 - albedo), tot_cs_dense * albedo, filename="mgxs.h5", xs_name="mat2")
     # openmc.config["mg_cross_sections"] = "mgxs.h5"  # :contentReference[oaicite:5]{index=5}
 
-    # 2) Material using macroscopic MGXS
+    # 2) Material using ma  roscopic MGXS
     macro = openmc.Macroscopic("out")
     mat_shell = openmc.Material(name="shell")
     mat_shell.set_density("macro", 1.0)     # required for macroscopic data
@@ -76,25 +76,15 @@ def build_and_run_torus(param_set, SOURCE_E_EV, PARTICLES, seed_value):
 
 
     outer = openmc.Sphere(r=2.0, boundary_type="vacuum") 
-    # cell_void = openmc.Cell(region=(+tor_out & -outer))
-    
     tor_in  = openmc.ZTorus(x0=0.0, y0=0.0, z0=param_set["geo"], a=R_MAJOR_IN,  b=R_MINOR_IN,  c=R_MINOR_IN, boundary_type="transmission")
     tor_out = openmc.ZTorus(x0=0.0, y0=0.0, z0=0.0, a=R_MAJOR_OUT, b=R_MINOR_OUT, c=R_MINOR_OUT, boundary_type="transmission")
 
-    # Regions:
-    # -tor_in  : inside inner torus
-    # -tor_out : inside outer torus
-    # +tor_in  : outside inner torus
     cell_in = openmc.Cell(region=-tor_in, fill=mat_in)
     cell_sh = openmc.Cell(region=(-tor_out & +tor_in), fill=mat_shell)
     cell_out = openmc.Cell(region=(+tor_out & -outer), fill=mat_void)
     
-    # help(openmc.material.Material)
-
     geom = openmc.Geometry(openmc.Universe(cells=[cell_in, cell_sh, cell_out]))
 
-    # cell = openmc.Cell(region=-sph_outer & +sph, fill=mat)
-    # geom = openmc.Geometry(openmc.Universe(cells=[cell_in, cell]))
 
     # 4) Settings: fixed source, multi-group
     settings = openmc.Settings()

@@ -9,9 +9,9 @@
     </space>
     <angle type="isotropic"/>
     <energy type="discrete">
-      <parameters>1500000.0 1.0</parameters>
+      <parameters>15000000.0 1.0</parameters>
     </energy>
   </source>
   <energy_mode>multi-group</energy_mode>
-  <seed>2253</seed>
+  <seed>2013</seed>
 </settings>

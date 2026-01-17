@@ -219,8 +219,18 @@ def build_and_run_torus_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_valu
     ])
 
     sig_t_inner, sig_a_inner, sig_s_tot_inner, P_inner, sig_s_mat_inner = build_mg_from_probs(sig_t, albedo, P=Phase_matrix, G=3, enforce_downscatter=False)
-    # print(sig_t_inner, sig_a_inner, sig_s_tot_inner, sig_s_mat_inner)
-    # exit(0)
+    
+    # energy all get absorbed
+    sig_t_vaccum = [0.0, 0.0, 0.0]
+    albedo_vaccum = [1.0, 1.0, 1.0]
+    Phase_matrix_vaccum = np.array([
+        [1.0, 0.00, 0.00],
+        [0.00, 1.00, 0.00],
+        [0.00, 0.00, 1.00],
+    ])
+
+    sig_t_vaccum, sig_a_vaccum, sig_s_tot_vaccum, P_vaccum, sig_s_mat_vaccum = build_mg_from_probs(sig_t_vaccum, albedo_vaccum, P=Phase_matrix_vaccum, G=3, enforce_downscatter=False)
+
     def to_g(x):
         x = np.asarray(x, dtype=float)
         if x.ndim == 0:
@@ -235,6 +245,7 @@ def build_and_run_torus_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_valu
         mats=[
             ("mat",  sig_t_shell, sig_a_shell, sig_s_shell),
             ("mat2", sig_t_inner, sig_a_inner, sig_s_mat_inner),
+            ("vaccum", sig_t_vaccum, sig_a_vaccum, sig_s_mat_vaccum)
         ],
         group_edges_eV=group_edges,
         filename="mgxs.h5"
@@ -243,25 +254,38 @@ def build_and_run_torus_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_valu
 
     # 2) Materials using macroscopic MGXS
     macro = openmc.Macroscopic("mat")
-    mat = openmc.Material(name="shell")
-    mat.set_density("macro", 1.0)
-    mat.add_macroscopic(macro)
+    mat_shell = openmc.Material(name="shell")
+    mat_shell.set_density("macro", 1.0)
+    mat_shell.add_macroscopic(macro)
 
     macro2 = openmc.Macroscopic("mat2")
-    mat2 = openmc.Material(name="inner")
-    mat2.set_density("macro", 1.0)
-    mat2.add_macroscopic(macro2)
+    mat_inner = openmc.Material(name="inner")
+    mat_inner.set_density("macro", 1.0)
+    mat_inner.add_macroscopic(macro2)
 
-    materials = openmc.Materials([mat2, mat])
+    macro2 = openmc.Macroscopic("vaccum")
+    mat_void = openmc.Material(name="vaccum")
+    mat_void.set_density("macro", 1.0)
+    mat_void.add_macroscopic(macro2)
+
+    materials = openmc.Materials([mat_inner, mat_shell, mat_void])
 
     # 3) Geometry
     # print("geomery: ----------", param_set["geo"])
-    sph = openmc.Sphere(x0=0, y0=0, z0=0, r=param_set["geo"])
-    sph_outer = openmc.Sphere(r=3.0, boundary_type="vacuum")
+    R_MAJOR_IN  = 1.0   # distance from center to tube centerline
+    R_MINOR_IN  = 0.3   # tube radius (minor)
+    R_MAJOR_OUT = 1.0
+    R_MINOR_OUT = 0.5
 
-    cell_in = openmc.Cell(region=-sph, fill=mat2)
-    cell = openmc.Cell(region=-sph_outer & +sph, fill=mat)
-    geom = openmc.Geometry(openmc.Universe(cells=[cell_in, cell]))
+    outer = openmc.Sphere(r=2.0, boundary_type="vacuum") 
+    tor_in  = openmc.ZTorus(x0=0.0, y0=0.0, z0=param_set["geo"], a=R_MAJOR_IN,  b=R_MINOR_IN,  c=R_MINOR_IN, boundary_type="transmission")
+    tor_out = openmc.ZTorus(x0=0.0, y0=0.0, z0=0.0, a=R_MAJOR_OUT, b=R_MINOR_OUT, c=R_MINOR_OUT, boundary_type="transmission")
+
+    cell_in = openmc.Cell(region=-tor_in, fill=mat_inner)
+    cell_sh = openmc.Cell(region=(-tor_out & +tor_in), fill=mat_shell)
+    cell_out = openmc.Cell(region=(+tor_out & -outer), fill=mat_void)
+    
+    geom = openmc.Geometry(openmc.Universe(cells=[cell_in, cell_sh, cell_out]))
 
     # 4) Settings
     settings = openmc.Settings()
@@ -291,7 +315,7 @@ def build_and_run_torus_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_valu
     tallies = openmc.Tallies()
     t = openmc.Tally(name="leakage_current")
     t.filters = [
-        openmc.SurfaceFilter(sph_outer),
+        openmc.SurfaceFilter(outer),
         openmc.CollisionFilter(coll_bins),
         openmc.EnergyFilter(group_edges),  # <-- optional, gives groupwise current
     ]
@@ -410,9 +434,6 @@ def build_and_run_sphere_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_val
     src.space = openmc.stats.Point((0.0, 0.0, 0.0))
     src.angle = openmc.stats.Isotropic()
 
-    # print("g_idx: ", g_idx)
-    # exit(0)
-
     # In multi-group mode, OpenMC expects source energy in terms of GROUPS.
     # Use Discrete over group indices 1..G (OpenMC groups are 1-based).
     # src.energy = openmc.stats.Discrete([1], [1.0])
@@ -445,28 +466,150 @@ def build_and_run_sphere_multi_group(param_set, SOURCE_E_EV, PARTICLES, seed_val
     std = tally.std_dev
     df = tally.get_pandas_dataframe()
     print(df)
-    # print(tally)
-    # print("openmc_group = = = = ", openmc_group, asc_idx)
 
-    # print("mean shape:", mean.shape)
-    # print(mean)
-    # print("std shape", std.shape)
     mean_reshape = mean.reshape(NMAX+1, G)
-  
-    # print(mean_reshape.shape, mean_reshape)
     mean_energies = np.sum(mean_reshape, axis=0)
-    # print(mean_energies.shape, mean_energies)
-    # exit(0)
-    # print(mean_reshape.shape)
-    # print(mean_energies.shape)
-    # exit(0)
-    # std_energies = np.sum(std.reshape(G, NMAX+1), axis=0)
-    # If you want total current summed over collisions and energy:
-    # total_current = float(mean.sum())
     return mean_energies
 
+def build_and_run_sphere_multi_group_sensor(param_set, SOURCE_E_EV, PARTICLES, seed_value):
+    # Row out_going, Column in_going
+    G = 3
+    group_edges = [0.0, 1.0e5, 1.0e6, 2.0e7]  # eV
+
+    sig_t_shell = [0.9, 0.9, 0.9]
+    sig_a_shell = [0.1, 0.1, 0.1]
+
+    # sig_s[g_out, g_in]
+    sig_s_shell = np.array([
+        [0.60, 0.10, 0.10],
+        [0.00, 0.40, 0.40],
+        [0.00, 0.00, 0.80],
+    ])
+
+    sig_t = [param_set["sig_t"], 0.8, 0.8]
+    albedo = [0.7, 0.7, 0.7]
+    Phase_matrix =  np.array([
+        [0.10, 0.90, 0.00],
+        [0.00, 0.50, 0.50],
+        [0.00, 0.00, 1.00],
+    ])
+
+    sig_t_inner, sig_a_inner, sig_s_tot_inner, P_inner, sig_s_mat_inner = build_mg_from_probs(sig_t, albedo, P=Phase_matrix, G=3, enforce_downscatter=False)
+
+    # energy all get absorbed
+    # sig_t_vaccum = [1e6, 1e6, 1e6]
+    # albedo_vaccum = [0.0, 0.0, 0.0]
+    # Phase_matrix_vaccum = np.array([
+    #     [1.0, 0.00, 0.00],
+    #     [0.00, 1.00, 0.00],
+    #     [0.00, 0.00, 1.00],
+    # ])
+
+    # sig_t_vaccum, sig_a_vaccum, sig_s_tot_vaccum, P_vaccum, sig_s_mat_vaccum = build_mg_from_probs(sig_t_vaccum, albedo_vaccum, P=Phase_matrix_vaccum, G=3, enforce_downscatter=False)
+    
+    def to_g(x):
+        x = np.asarray(x, dtype=float)
+        if x.ndim == 0:
+            return np.full((G,), float(x))
+        x = x.reshape((G,))
+        return x
+
+    # 1) Write 3-group MGXS file and point OpenMC to it
+    make_3group_mgxs_two_materials(
+        mats=[
+            ("shell",  sig_t_shell, sig_a_shell, sig_s_shell),
+            ("inner", sig_t_inner, sig_a_inner, sig_s_mat_inner),
+            # ("vaccum", sig_t_vaccum, sig_a_vaccum, sig_s_mat_vaccum),
+        ],
+        group_edges_eV=group_edges,
+        filename="mgxs.h5"
+    )
+    openmc.config["mg_cross_sections"] = "mgxs.h5"
+
+    # 2) Materials using macroscopic MGXS
+    macro = openmc.Macroscopic("shell")
+    mat = openmc.Material(name="shell")
+    mat.set_density("macro", 1.0)
+    mat.add_macroscopic(macro)
+
+    macro2 = openmc.Macroscopic("inner")
+    mat2 = openmc.Material(name="inner")
+    mat2.set_density("macro", 1.0)
+    mat2.add_macroscopic(macro2)
+
+    # macro2 = openmc.Macroscopic("vaccum")
+    # mat_vac = openmc.Material(name="vaccum")
+    # mat_vac.set_density("macro", 1.0)
+    # mat_vac.add_macroscopic(macro2)
+
+    materials = openmc.Materials([mat2, mat])
+
+    # 3) Geometry
+    # print("geomery: ----------", param_set["geo"])
+    sph = openmc.Sphere(x0=0, y0=0, z0=0, r=param_set["geo"])
+    sph_outer = openmc.Sphere(r=3.0, boundary_type="vacuum")
+    sph_sensor = openmc.Sphere(x0=1.0, y0=1.0, z0=1.0, r=0.05, boundary_type="vacuum")
+
+    cell_in = openmc.Cell(region=-sph & +sph_sensor, fill=mat2)
+    cell = openmc.Cell(region=-sph_outer & +sph & +sph_sensor, fill=mat)
+    cell_vaccum = openmc.Cell(region = -sph_sensor)
+    geom = openmc.Geometry(openmc.Universe(cells=[cell_in, cell, cell_vaccum]))
+
+    # 4) Settings
+    settings = openmc.Settings()
+    settings.run_mode = "fixed source"
+    settings.energy_mode = "multi-group"
+    settings.batches = BATCHES
+    settings.particles = PARTICLES
+    settings.seed = seed_value
+
+    src = openmc.IndependentSource()
+    src.space = openmc.stats.Point((0.0, 0.0, 0.0))
+    src.angle = openmc.stats.Isotropic()
+
+    # In multi-group mode, OpenMC expects source energy in terms of GROUPS.
+    # Use Discrete over group indices 1..G (OpenMC groups are 1-based).
+    # src.energy = openmc.stats.Discrete([1], [1.0])
+    src.energy = openmc.stats.Discrete([SOURCE_E_EV], [1.0])
+    settings.source = src
+
+    # 5) Tally: optionally add an EnergyFilter to see per-group leakage
+    NMAX = 4
+    coll_bins = list(range(NMAX + 1))
+
+    tallies = openmc.Tallies()
+    t = openmc.Tally(name="leakage_current")
+    t.filters = [
+        openmc.SurfaceFilter(sph_sensor),
+        openmc.CollisionFilter(coll_bins),
+        openmc.EnergyFilter(group_edges),  # <-- optional, gives groupwise current
+    ]
+    t.scores = ["current"]
+    tallies.append(t)
+
+    model = openmc.Model(materials=materials, geometry=geom, settings=settings, tallies=tallies)
+    model.export_to_xml()
+    openmc.run()
+
+    # 6) Postprocess
+    sp = openmc.StatePoint(f"statepoint.{BATCHES}.h5")
+    tally = sp.get_tally(name="leakage_current")
+    
+    mean = tally.mean  # now 3D-ish because of collision bins and energy bins
+    std = tally.std_dev
+    df = tally.get_pandas_dataframe()
+    # print(df["mean"])
+
+    mean_reshape = mean.reshape(NMAX+1, G)
+    mean_energies = np.sum(mean_reshape, axis=0)
+    print("mean energies:", mean_energies)
+    return mean_energies
+
+
+
 function_dict = {
-    "sphere": build_and_run_sphere_multi_group
+    "sphere": build_and_run_sphere_multi_group,
+    "torus": build_and_run_torus_multi_group
 }
 
 def save_data(name, values, gradient, gradient_errors, xs, val_std):
@@ -600,43 +743,26 @@ if __name__ == "__main__":
     "sig_t": 0.9,
     }
 
+    torus_param_set = {"geo":0.0,
+    "sig_t": 0.9,
+    }
+
+    torus_geo_range = [-0.195, 0.195]
+
     steps = 25
-    N = 10
+    N = 20
     delta = 0.01
     source_power = 1.5e+07
     num_particles = 300000
-    id = 3
-    finite_difference_param(sig_t_range, "sig_t", param_set, "sphere", steps, N, delta, source_power, num_particles, id)
-    plot_with_errors(f"sphere_sig_t_multi_{id}")
+    id = 2
+    v = []
+    for i in range(N):
+        v.append(build_and_run_sphere_multi_group_sensor(param_set, source_power, num_particles, 1994+i))
+    v = np.mean(np.array(v), axis=0)
+    print("Total: ", v)
+    # finite_difference_param(torus_geo_range, "geo", torus_param_set, "torus", steps, N, delta, source_power, num_particles, id)
+    # finite_difference_param(sig_t_range, "sig_t", param_set, "sphere", steps, N, delta, source_power, num_particles, id)
+    # plot_with_errors(f"torus_geo_multi_{id}")
 
 
 
-    # make_3group_mgxs_two_materials(
-    #     mats=[("mat", sig_t_shell, sig_a_shell, sig_s_shell)],
-    #     group_edges_eV=group_edges,
-    #     filename="mgxs.h5",
-    #     scatter_order=0,
-    # )
-    # openmc.config["mg_cross_sections"] = "mgxs.h5"
-
-    # (3, 2) [[0.         0.        ]
-    # [0.067846   0.        ]
-    # [0.00120733 0.08287567]]
-
-    # (3, 1) [[0.      ]
-    # [0.      ]
-    # [0.067846]]
-
-#        surface  collision  energy low [eV]  energy high [eV] nuclide    score     mean  std. dev.
-# 0        2          0         0.00e+00          1.00e+05   total  current 0.00e+00   0.00e+00
-# 1        2          0         1.00e+05          1.00e+06   total  current 0.00e+00   0.00e+00
-# 2        2          0         1.00e+06          2.00e+07   total  current 6.78e-02   6.24e-05
-
-
-#    surface  collision  energy low [eV]  energy high [eV] nuclide    score     mean  std. dev.
-# 0        2          0         0.00e+00          1.00e+05   total  current 0.00e+00   0.00e+00
-# 1        2          0         1.00e+05          1.00e+06   total  current 0.00e+00   0.00e+00
-# 2        2          0         1.00e+06          2.00e+07   total  current 6.78e-02   6.24e-05
-# 3        2          1         0.00e+00          1.00e+05   total  current 0.00e+00   0.00e+00
-# 4        2          1         1.00e+05          1.00e+06   total  current 1.21e-03   8.97e-06
-# 5        2          1         1.00e+06          2.00e+07   total  current 8.29e-02   6.61e-05

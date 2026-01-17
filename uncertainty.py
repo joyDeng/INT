@@ -275,8 +275,8 @@ if __name__ == "__main__":
     # Epistemic scenarios: uncertain (mu, sigma) for θ ~ N(mu, sigma^2)
     rng = np.random.default_rng(0)
     K = 120
-    mu_s = rng.uniform(-0.15, 0.15, size=K)
-    sig_s = rng.uniform(0.01, 0.05, size=K)
+    mu_s = rng.uniform(-0.15, 0.15, size=K) # mean
+    sig_s = rng.uniform(0.01, 0.05, size=K) # variance
 
     # Monte Carlo outputs per scenario (reference p-box)
     N = 100
@@ -300,3 +300,12 @@ if __name__ == "__main__":
     ax.set_title("Monte Carlo p-box vs Gradient (Delta-method) p-box")
     # plt.show()
     plt.savefig("uncertainty_geo.png")
+
+
+# p = [p1, p2]
+# pm = [pm1, pm2]
+# pv = [pv1, pv2]
+
+# [d y / d p] cov_martrix [d y / d p]
+
+# [1 param] [3 param, no covariance] [3 param, covariance] [geom]

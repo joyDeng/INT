@@ -66,22 +66,25 @@ class CSGNode:
 
 
         if self.op == "union":
+            # print("\n new lists: ", left_state_lists, right_state_lists)
             for left_st in left_state_lists:
                 for right_st in right_state_lists:
-                    # print(not right_st)
+                    
                     state_lists.append(left_st+right_st)
-                    state_lists.append(left_st+[not right_st])
-                    state_lists.append([not left_st]+right_st)
-                    # print(state_lists)
+                    state_lists.append(left_st+[not s for s in right_st])
+                    # print("\n adding, ", left_st, "right", right_st, "not:", [not s for s in right_st])
+                    state_lists.append([not s for s in left_st]+right_st)
+                    # print("union:", left_st, "and", right_st, "get:", state_lists)
         elif self.op == "intersection":
             for left_st in left_state_lists:
                 for right_st in right_state_lists:
                     state_lists.append(left_st+right_st)
+            # print("intersection:", left_st, "and", right_st, "get:", state_lists)
         elif self.op == "difference":
             for left_st in left_state_lists:
                 for right_st in right_state_lists:
-                    state_lists.append(left_st + [not right_st])
-        
+                    state_lists.append(left_st + [not s for s in right_st])
+            # print("difference:", left_st, "and", right_st, "get:", state_lists)
         return state_lists, left_order + right_order
     
 # add multiple energy tally
@@ -130,19 +133,16 @@ class SceneMaterial:
         self.node_state_lists = [] 
         self.node_shape_orders = []
         self.num_material = len(csgnodes)
-        # self.num_material_ad = UInt32D(len(csgnodes))
         self.num_geo = num_geo
-        # which geometry are gradient enabled
         self.energy_groups = energy_groups
-        # self.energy_groups_ad = UInt32D(energy_groups)
-
         self.init_multi_group_properties(energy_groups, len(csgnodes))
 
         # replace with drjit
         for node in self.csg_node_list:
             state_list, shape_order = node.state_list()
-            # we have problem here when size of state list is larger than 1
             # print(state_list, shape_order)
+            # exit(0)
+            # we have problem here when size of state list is larger than 1
             shape_id = UInt(shape_order)
             state_array = np.array(state_list).astype(np.int32)
             
@@ -169,6 +169,8 @@ class SceneMaterial:
         # exit(0)
 
     def print_materials(self):
+        print("shape order: ", self.node_shape_orders)
+        print("node: ", self.node_state_lists)
         print("energy_groups: ", self.energy_groups)
         print("cross_tot_list", self.cross_tot_list)
         print("albedo", self.alb_tot_list)
@@ -255,10 +257,11 @@ class SceneMaterial:
         # terminate_ray = mask_invalid | exit_ray
 
 class IterProp:
-    def __init__(self, radiance, energy_group_idx, ray_current):
+    def __init__(self, radiance, energy_group_idx, ray_current, active):
         self.radiance = radiance
-        self.energy_group_idx
+        self.energy_group_idx = energy_group_idx
         self.ray_current = ray_current
+        self.active = active
 
 class RayGeoIts:
     def __init__(self, all_its, material_spaces, ray_current, vertices_list, faces_list):
@@ -266,15 +269,16 @@ class RayGeoIts:
         self.material_space = material_spaces
 
 class SceneInfo:
-    def __init__(self, scm, scene, vertices_list, face_list, rng):
+    def __init__(self, scene, rng, scm, vertices_list, faces_list, sensor=None):
         self.scm = scm
         self.scene = scene
         self.vertices_list = vertices_list
-        self.face_list = face_list
+        self.faces_list = faces_list
         self.rng = rng
+        self.sensor = sensor
 
 class AttenSample:
-    def __init__(self, attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid):
+    def __init__(self, attenuation, reparam_factor, attenuation_till_scatter, pdf, scatter_pos, feature, exit_ray, mask_invalid, scatter_material_idx):
         self.attenuation = attenuation
         self.reparam_factor = reparam_factor
         self.attenuation_till_scatter = attenuation_till_scatter
@@ -283,6 +287,7 @@ class AttenSample:
         self.feature = feature
         self.exit_ray = exit_ray
         self.mask_invalid = mask_invalid
+        self.scatter_material_idx = scatter_material_idx
     
 
 
@@ -386,7 +391,7 @@ def geo_intersect(scene, ray, active_ray):
     # i = 0
     continue_trace = True
     while continue_trace: # check whether there is a infinite while loop
-        its = scene.ray_intersect(iter_ray)
+        its = scene.ray_intersect(iter_ray, active)
         dr.eval(its)
         shape_id = get_shape_id(scene, its.shape)
         active = dr.select(its.is_valid() & active, True, False)
@@ -518,6 +523,8 @@ def get_material_space_along_ray(its, its_inv, scm, ray_num, ray_dir):
 
     for intersect in its:
         it = intersect[0]
+        # help(it)
+        # exit(0)
         # ignore the tagent intersection
         no_parallel = dr.abs(dr.dot(ray_dir, it.sh_frame.n)) > 0.0
         active_mask = (intersect[1] & no_parallel) 

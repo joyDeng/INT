@@ -1,7 +1,9 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <geometry>
-  <cell id="1559" material="1560" region="-1559" universe="780"/>
-  <cell id="1560" material="1559" region="-1560 1559" universe="780"/>
-  <surface id="1559" type="sphere" coeffs="0 0 0 1.0"/>
-  <surface id="1560" type="sphere" boundary="vacuum" coeffs="0.0 0.0 0.0 3.0"/>
+  <cell id="58" material="40" region="-58 60" universe="20"/>
+  <cell id="59" material="39" region="-59 58 60" universe="20"/>
+  <cell id="60" material="void" region="-60" universe="20"/>
+  <surface id="58" type="sphere" coeffs="0 0 0 1.0"/>
+  <surface id="59" type="sphere" boundary="vacuum" coeffs="0.0 0.0 0.0 3.0"/>
+  <surface id="60" type="sphere" boundary="vacuum" coeffs="1.0 1.0 1.0 0.05"/>
 </geometry>
