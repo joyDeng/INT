@@ -1,4 +1,5 @@
-from simulator import *
+from area_tally import *
+# from simulator import *
 from csg import save_grid_data
 from constant import DATA_DIR
 
@@ -92,8 +93,9 @@ def load_test_scene_heat():
         'A': {
             'id': 'A',
             'type': 'obj',
-            'to_world': mi.ScalarTransform4f().scale([1.5, 1.5, 1.5]),
-            'filename': f"{DATA_DIR}/scene/sphere_sPVmooth.obj",
+            'to_world': mi.ScalarTransform4f().rotate([0, 1, 0], 180) @ mi.ScalarTransform4f().scale([1.5, 1.5, 1.5]),
+            # 'to_world': mi.ScalarTransform4f().scale([1.5, 1.5, 1.5]),
+            'filename': f"{DATA_DIR}/scene/gear_w_hole.obj",
             'bsdf': {'type': 'diffuse',
                     'reflectance': {
                     'type': 'rgb',
@@ -104,7 +106,7 @@ def load_test_scene_heat():
         'B': {
             'id': 'B',
             'type': 'obj',
-            'to_world': mi.ScalarTransform4f().scale([6.0, 6.0, 6.0]),
+            'to_world': mi.ScalarTransform4f().scale([10.0, 10.0, 10.0]),
             'filename': f"{DATA_DIR}/scene/sphere_smooth.obj",
             'bsdf': {'type': 'diffuse',
                     'reflectance': {
@@ -123,9 +125,9 @@ def load_test_scene_heat():
     m2 = CSGNode("difference", shape0, shape1)
     # scm = SceneMaterial([m1, m2], cross_tots, cross_as, 2, 1)
 
-    scm = SceneMaterial([m1, m2], [[0.5, 0.3]], [[0.95, 0.95]], 2, 1)
-    scm.set_material_sigma(TensorXf([[0.5, 0.3]]))
-    scm.set_material_ald(TensorXf([[0.95, 0.95]]))
+    scm = SceneMaterial([m1, m2], [[0.75, 0.01]], [[0.95, 0.95]], 2, 1)
+    scm.set_material_sigma(TensorXf([[0.75, 0.01]]))
+    scm.set_material_ald(TensorXf([[0.8, 0.8]]))
     phase_function = TensorXf([
         [[1.0, 1.0]],
     ])
@@ -1221,13 +1223,14 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
   
     # generate rays
     ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
-    ray_origin.x -= 3.0
+    ray_origin.x = -3.0
     # ray_origin.y = 0.0
-    ray_origin.y = sample_float_32(rng) * 2.0 - 1.0
+    # ray_origin.y = sample_float_32(rng) * 4.0 - 2.0
     # random_cos = sample_float_32(rng) * 2.0 - 1.0
     # ray_vec.x += dr.sqrt(1.0 - random_cos * random_cos)
     # ray_vec.y += random_cos
-    ray_vec.x += 1.0
+    ray_vec.x = 1.0
+    # ray_origin.y += 0.20
     # ray_vec.y -= 0.25
     ray_vec /= dr.norm(ray_vec)
     # print(ray_vec)
@@ -1241,7 +1244,7 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
     aV = dr.unravel(mi.Point3f, params['A.vertex_positions'])
     # aN = dr.unravel(mi.Vector3f, params['.vertex_normals'])
 
-    # aV.y = aV.y + Offset
+    aV.y = aV.y + Offset
     params['A.vertex_positions'] = dr.ravel(aV)
     
     
@@ -1279,42 +1282,64 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
         
     return voxels_array
 
-def two_sphere_get_spatial_gradient(nuetron_number, seed, file_id, epho, bid=0):
-    delta = 0.001
-    resolution = mi.Vector3i(50, 50, 50)
-    boundingbox = [mi.Vector3f(-3.5, -3.5, -3.5), mi.Vector3f(3.5, 3.5, 3.5)]
-
+def run_exp(nuetron_number, seed, file_id, epho, est_name, bid, resolution, boundingbox):
     # finite difference
     N = epho
-    for i in range(N):
-        print("finite diff iteration", i)
-        print("+: ")
-        spatial_plus = two_sphere_get_spatial_distribution(nuetron_number, delta, seed+i * 10, resolution, boundingbox, True, str(file_id)+"+", 'tr', bid)
-        print("-: ")
-        spatial_min = two_sphere_get_spatial_distribution(nuetron_number, -delta, seed+i * 10, resolution, boundingbox, True, str(file_id)+"-", 'tr', bid)
-        if i == 0:
-            gradients_fd = (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
-        else:
-            gradients_fd += (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
+    if est_name == "fd":
+        delta = 0.001
+        for i in range(N):
+            print("finite diff iteration", i)
+            print("+: ")
+            spatial_plus = two_sphere_get_spatial_distribution(nuetron_number, delta, seed+i * 10, resolution, boundingbox, True, str(file_id)+"+", 'tr', bid)
+            print("-: ")
+            spatial_min = two_sphere_get_spatial_distribution(nuetron_number, -delta, seed+i * 10, resolution, boundingbox, True, str(file_id)+"-", 'tr', bid)
+            if i == 0:
+                gradients_fd = (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
+            else:
+                gradients_fd += (spatial_plus.numpy() - spatial_min.numpy()) / (2 * delta)
+        
+        save_grid_data(gradients_fd / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_fd.npy".format(file_id), 'wb')
+        del gradients_fd, spatial_plus, spatial_min
+    else:
+        for i in range(N):
+            print("auto diff iterations", i)
+            # dr.set_flag(dr.JitFlag.Debug, False)
+            Offset = FloatD(0.0)
+            dr.enable_grad(Offset)
+            spatial_distribution = two_sphere_get_spatial_distribution(nuetron_number // 10, Offset, seed + i * 10, resolution, boundingbox, True, file_id, est_name, bid)
+            dr.forward(Offset)
+            if i == 0:
+                gradients_ad = dr.grad(spatial_distribution).numpy()
+                val = spatial_distribution.numpy()
+                save_grid_data(gradients_ad, resolution, boundingbox, "{:02d}_two_sphere_collision_density_grad_{}r.npy".format(file_id, est_name), 'wb')
+                dr.eval(gradients_ad)
+            else:
+                gradients_ad += dr.grad(spatial_distribution).numpy()
+                val += spatial_distribution.numpy()
+                dr.eval(gradients_ad)
+            del spatial_distribution
+        save_grid_data(gradients_ad / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_{}.npy".format(file_id, est_name), 'wb')
+        save_grid_data(val / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_avg_{}.npy".format(file_id, est_name), 'wb')
+
+def two_sphere_get_spatial_gradient(nuetron_number, seed, file_id, epho, bid=0):
+    delta = 0.001
+    resolution = mi.Vector3i(64, 64, 64)
+    boundingbox = [mi.Vector3f(-3.5, -3.5, -3.5), mi.Vector3f(3.5, 3.5, 3.5)]
+
+    run_exp(nuetron_number, seed, file_id, epho, 'fd', bid, resolution, boundingbox)
+    run_exp(nuetron_number, seed, file_id, epho, 'tr', bid, resolution, boundingbox)
+    run_exp(nuetron_number, seed, file_id, epho, 'co', bid, resolution, boundingbox)
+
+    # Offset = FloatD(0.0)
+    # dr.enable_grad(Offset)
+    # co_est = two_sphere_get_spatial_distribution(nuetron_number // 10, Offset, seed + i * 10, resolution, boundingbox, True, file_id, 'co', bid)
+    # dr.forward(Offset)
+    # co_grad = dr.grad(co_est)
+    # save_grid_data(co_grad.numpy(), resolution, boundingbox, "{:02d}_two_sphere_collision_density_grad_co.npy".format(file_id), 'wb')
+    # del co_est, co_grad
     
-    save_grid_data(gradients_fd / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_fd.npy".format(file_id), 'wb')
 
     
-    for i in range(N):
-        print("auto diff iterations", i)
-        # dr.set_flag(dr.JitFlag.Debug, False)
-        Offset = FloatD(0.0)
-        dr.enable_grad(Offset)
-        spatial_distribution = two_sphere_get_spatial_distribution(nuetron_number, Offset, seed + i * 10, resolution, boundingbox, True, file_id, 'tr', bid)
-        dr.forward(Offset)
-        if i == 0:
-            gradients_ad = dr.grad(spatial_distribution).numpy()
-            dr.eval(gradients_ad)
-        else:
-            gradients_ad += dr.grad(spatial_distribution).numpy()
-            dr.eval(gradients_ad)
-    save_grid_data(gradients_ad / N, resolution, boundingbox, "{:02d}_two_sphere_collision_density_gradients_ad.npy".format(file_id), 'wb')
-
 # @dr.syntax
 def test_beams_hat(num_neutrons, reso):
     rng = mi.PCG32(size=num_neutrons, initstate=1)
@@ -1389,10 +1414,10 @@ if __name__ == "__main__":
     # test_gradient_multi_1d(0, 200000)
     # test_2cubes(400000)
     # test_hemisphere_range()
-    # seed = 1991
+    seed = 1991
     # v = np.zeros(1)
     # for i in range(12000):
-    # two_sphere_get_spatial_gradient(100000, seed, file_id=2, epho=1, bid=1)
+    two_sphere_get_spatial_gradient(100000, seed, file_id=10, epho=10, bid=-1)
     # print(v)
     # test_track_length(20000, 0.1, "18")
     # test_kernel(1000, 4)
@@ -1400,12 +1425,12 @@ if __name__ == "__main__":
 
     # test beam hat
     # test_beams_hat(1, 120)
-    num_neutrons = 2000000
-    param_range = [0.1, 2.0]
-    torus_scale_range = [-0.195, 0.195]
-    sphere_scale_range = [0.1, 2.0]
-    albedo_range = [0.8, 0.995]
-    N = 10
+    # num_neutrons = 2000000
+    # param_range = [0.1, 2.0]
+    # torus_scale_range = [-0.195, 0.195]
+    # sphere_scale_range = [0.1, 2.0]
+    # albedo_range = [0.8, 0.995]
+    # N = 10
 
     # Etot = []
     # for i in range(N):
@@ -1416,7 +1441,7 @@ if __name__ == "__main__":
     # print("Etot: ", Etot)
     
     # exit(0)
-    steps = 25
+    # steps = 25
     
     # test_radius_gradient(num_neutrons, radius_range, steps)
 
@@ -1430,7 +1455,7 @@ if __name__ == "__main__":
     #     "albedo": 0.9
     # }
     # sig_t_range = [0.1, 2.0]
-    test_parameter_gradient_multi(num_neutrons, torus_scale_range, steps, "torus", "geo", {"geo": 0.0, "sig_t": FloatD(0.9)}, N, id=2)
+    # test_parameter_gradient_multi(num_neutrons, torus_scale_range, steps, "torus", "geo", {"geo": 0.0, "sig_t": FloatD(0.9)}, N, id=2)
     
     # test load the parameters for multi energy groups
     # two_sphere_multi_energy(num_neutrons, {"geo": 0.5}, 1994)

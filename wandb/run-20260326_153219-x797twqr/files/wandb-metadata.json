@@ -1,0 +1,55 @@
+{
+  "os":  "Linux-5.4.0-216-generic-x86_64-with-glibc2.31",
+  "python":  "CPython 3.9.15",
+  "startedAt":  "2026-03-26T22:32:19.798455Z",
+  "args":  [
+    "--epochs",
+    "200",
+    "--num_neutrons",
+    "100000",
+    "--max_bounce",
+    "2",
+    "--cache",
+    "--wandb_project",
+    "fno-geo-flux",
+    "--vis_every",
+    "5",
+    "--out_prefix",
+    "fno_flux"
+  ],
+  "program":  "/home/xideng/Research/INT/fno_geo_flux.py",
+  "codePath":  "fno_geo_flux.py",
+  "codePathLocal":  "fno_geo_flux.py",
+  "git":  {
+    "remote":  "git@github.com:joyDeng/INT.git",
+    "commit":  "ee3b59fbb292519baae5b1a000f425062702fc04"
+  },
+  "email":  "dxJOY_china@outlook.com",
+  "root":  "/home/xideng/Research/INT",
+  "host":  "Simsimmi",
+  "executable":  "/home/xideng/anaconda3/envs/mts/bin/python",
+  "cpu_count":  12,
+  "cpu_count_logical":  24,
+  "gpu":  "NVIDIA GeForce RTX 4090",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "502392610816",
+      "used":  "464897818624"
+    }
+  },
+  "memory":  {
+    "total":  "134976262144"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 4090",
+      "memoryTotal":  "25757220864",
+      "cudaCores":  16384,
+      "architecture":  "Ada",
+      "uuid":  "GPU-314a3fb5-cc59-154d-0b2f-02d12c6f89bb"
+    }
+  ],
+  "cudaVersion":  "13.0",
+  "writerId":  "4f13btdw79am967q9h4w9kmzh8k6zyph"
+}

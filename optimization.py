@@ -126,8 +126,6 @@ def opt(scenefile, iteration_count, key, remesh):
     
     lambda_ = 35
     ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
-    
-
 
     opt = mi.ad.Adam(lr=0.005)
     opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])

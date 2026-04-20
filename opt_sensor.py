@@ -1,6 +1,6 @@
 from simulator import *
 from area_tally import sample_dir_from_unit_ring
-# from gpytoolbox import remesh_botsch
+from gpytoolbox import remesh_botsch
 
 from constant import DATA_DIR, TEMP_DIR
 
@@ -65,7 +65,7 @@ def load_reactor_scene(params):
         'C': {
             'id': 'C',
             'type': 'obj',
-            'to_world': mi.ScalarTransform4f().scale([1.0, 1.0, 1.0]),
+            'to_world': mi.ScalarTransform4f().scale([2.0, 2.0, 1.0]),
             'filename': f"{DATA_DIR}/scene/sensor_inner.obj",
             'bsdf': {'type': 'diffuse',
                     'reflectance': {
@@ -77,7 +77,7 @@ def load_reactor_scene(params):
         'D': {
             'id': 'D',
             'type': 'obj',
-            'to_world': mi.ScalarTransform4f().scale([2.0, 2.0, 1.0]),
+            'to_world': mi.ScalarTransform4f().scale([2.1, 2.1, 1.0]),
             'filename': f"{DATA_DIR}/scene/sensor_outer_shell.obj",
             'bsdf': {'type': 'diffuse',
                     'reflectance': {
@@ -399,6 +399,168 @@ def point_light(num_neutrons, rng):
     dr.make_opaque(ray_current)
     return ray_current
 
+
+
+# @dr.wrap(source='torch', target='drjit')
+def opt_mesh_volume_constraints(iteration_count, name, key, nuetron_number, param_dict, remesh=5000):
+    material_params = set_parameter(param_dict)
+    scene, scm, sensor = load_reactor_scene(material_params)
+    rng = mi.PCG32(size=nuetron_number, initstate=1994)
+    dr.make_opaque(rng)
+
+    params = mi.traverse(scene)
+    lambda_ = 35
+    ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+
+    opt = mi.ad.Adam(lr=0.005)
+    opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
+    
+    dr.enable_grad(params[f'{key}.vertex_positions'])
+    v_np, f_np, target_length = get_vf(params, key)
+    
+    
+
+    params.update(opt)
+    errors = []
+    volumes = []
+    for it in range(iteration_count):
+        if it % 10 == 0:
+            shapes = scene.shapes()
+            shapes[0].write_ply(TEMP_DIR + f"{name}_{key}_iter{it}.ply")
+            np.save(TEMP_DIR+f"{name}_energy.npy", np.array(errors))
+            np.save(TEMP_DIR+f"{name}_volumes.npy", np.array(volumes))
+
+        if (it % remesh == 1) and (it > 1) and remesh > 0:
+            print("try to reparamerize")
+            v_np, f_np, avglength = get_vf(params, key)
+
+            if (it // remesh) in [3, 5]:
+                updatelength =  avglength * 0.5
+            else:
+                updatelength = avglength
+
+            v_new, f_new = remesh_botsch(v_np, f_np, i=5, h=updatelength, project=True)
+
+            params[f'{key}.vertex_positions'] =  mi.Float(v_new.flatten().astype(np.float32))
+            params[f'{key}.faces'] = mi.Int(f_new.flatten())
+            params.update()
+            
+            # print(help(opt))
+            del opt
+            ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+            
+            # exit(0)
+            # print(target_length * 0.5)
+            # exit(0)
+            opt = mi.ad.Adam(lr=updatelength * 0.07)
+            dr.enable_grad(params[f'{key}.vertex_positions'])
+            params.update()
+            opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
+            params.update(opt)
+
+        params[f'{key}.vertex_positions'] = ls.from_differential(opt['u'])
+        params.update()
+    
+        vertices_list, faces_list = get_vertices_face_list(params)
+        ray_current = point_light(nuetron_number, rng)
+        sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list, sensor)
+
+        volume = compute_volume(vertices_list[0], faces_list[0])
+        volume_loss = dr.abs(1.51 - volume)
+
+        Etot = render_neutron_in_csg_shape_energy_dependent_with_sensor(sceneinfo, ray_current, True)
+        energy_loss = 1.0 - dr.gather(type(Etot), Etot, UInt(1))
+
+        loss = energy_loss + 0.1 * volume_loss
+        dr.eval()
+        dr.backward(loss)
+        opt.step()
+
+        print(f"Iteration {it:02d}: energy = {energy_loss.numpy()[0]:6f}, volume = {volume.numpy()[0]:6f}")  #end='\r'
+        errors.append(energy_loss.numpy())
+        volumes.append(volume.numpy())
+        del Etot, loss, volume_loss, energy_loss
+
+    np.save(TEMP_DIR+f"{name}_energy.npy", np.array(errors))
+    np.save(TEMP_DIR+f"{name}_volumes.npy", np.array(volumes))
+    print('\nOptimization complete.')
+
+
+# @dr.wrap(source='torch', target='drjit')
+def opt_mesh(iteration_count, name, key, nuetron_number, param_dict, remesh=5000):
+    material_params = set_parameter(param_dict)
+    scene, scm, sensor = load_reactor_scene(material_params)
+    rng = mi.PCG32(size=nuetron_number, initstate=1994)
+    dr.make_opaque(rng)
+
+    params = mi.traverse(scene)
+    lambda_ = 35
+    ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+
+    opt = mi.ad.Adam(lr=0.005)
+    opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
+    
+    dr.enable_grad(params[f'{key}.vertex_positions'])
+    v_np, f_np, target_length = get_vf(params, key)
+    
+    params.update(opt)
+    errors = []
+    volumes = []
+    for it in range(iteration_count):
+        if it % 10 == 0:
+            shapes = scene.shapes()
+            shapes[0].write_ply(TEMP_DIR + f"{name}_{key}_iter{it}.ply")
+            np.save(TEMP_DIR+"energy.npy", np.array(errors))
+
+        if (it % remesh == 1) and (it > 1) and remesh > 0:
+            print("try to reparamerize")
+            v_np, f_np, avglength = get_vf(params, key)
+
+            if (it // remesh) in [3, 5]:
+                updatelength =  avglength * 0.5
+            else:
+                updatelength = avglength
+
+            v_new, f_new = remesh_botsch(v_np, f_np, i=5, h=updatelength, project=True)
+
+            params[f'{key}.vertex_positions'] =  mi.Float(v_new.flatten().astype(np.float32))
+            params[f'{key}.faces'] = mi.Int(f_new.flatten())
+            params.update()
+            
+            # print(help(opt))
+            del opt
+            ls = mi.ad.LargeSteps(params[f'{key}.vertex_positions'], params[f'{key}.faces'], lambda_)
+            
+            # exit(0)
+            # print(target_length * 0.5)
+            # exit(0)
+            opt = mi.ad.Adam(lr=updatelength * 0.07)
+            dr.enable_grad(params[f'{key}.vertex_positions'])
+            params.update()
+            opt['u'] = ls.to_differential(params[f'{key}.vertex_positions'])
+            params.update(opt)
+
+        params[f'{key}.vertex_positions'] = ls.from_differential(opt['u'])
+        params.update()
+    
+        vertices_list, faces_list = get_vertices_face_list(params)
+        ray_current = point_light(nuetron_number, rng)
+        sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list, sensor)
+        Etot = render_neutron_in_csg_shape_energy_dependent_with_sensor(sceneinfo, ray_current, True)
+        loss = 1.0 - dr.gather(type(Etot), Etot, UInt(1))
+        dr.eval()
+        dr.backward(loss)
+        opt.step()
+
+        print(f"Iteration {it:02d}: energy = {loss.numpy()[0]:6f}")  #end='\r'
+        errors.append(loss.numpy())
+        del Etot, loss
+
+    np.save(TEMP_DIR+"energy.npy", np.array(errors))
+    print('\nOptimization complete.')
+
+
+
 # @dr.wrap(source='torch', target='drjit')
 def opt(iteration_count, key, nuetron_number, param_dict):
      # param_dict = {"sig_t": FloatD(2.0)}
@@ -411,7 +573,7 @@ def opt(iteration_count, key, nuetron_number, param_dict):
     # create optimizer
     Radius = FloatD(param_dict["geo"])
     dr.enable_grad(Radius)
-    opt = mi.ad.Adam(lr=0.01)
+    opt = mi.ad.Adam(lr=0.02)
     opt["radius"] = Radius
     dr.make_opaque(opt["radius"])
 
@@ -421,7 +583,6 @@ def opt(iteration_count, key, nuetron_number, param_dict):
 
     # radius = param_dict["geo"] 
     # dr.make_opaque(radius)
-
     params['D.vertex_positions'] = dr.ravel(dV)
     dr.enable_grad(params['D.vertex_positions'])
     params.update()
@@ -459,9 +620,7 @@ def opt(iteration_count, key, nuetron_number, param_dict):
         params.update()
 
         vertices_list, faces_list = get_vertices_face_list(params)
-
         ray_current = point_light(nuetron_number, rng)
-
         sceneinfo = SceneInfo(scene, rng, scm, vertices_list, faces_list, sensor)
         Etot = render_neutron_in_csg_shape_energy_dependent_with_sensor(sceneinfo, ray_current, True)
         level_1 = dr.gather(FloatD, Etot, UInt(1))
@@ -558,13 +717,13 @@ def forward_capture(num_neutrons, seed, param_dict):
     return Etot
 
 def scan_radius():
-    param_range = [1.0, 9.0]
-    data_points = 25
+    param_range = [1.0, 7.0]
+    data_points = 50
     step_size = (param_range[1] - param_range[0]) / data_points
     r = param_range[0]
     energy = []
     rs = []
-    N = 20
+    N = 40
     for i in range(data_points+1):
         print("iteration i", i)
         param_dict = {
@@ -573,43 +732,14 @@ def scan_radius():
         }
         cur_energy = []
         for j in range(N):
-            Etot = forward_capture(2000000, 1994 + j, param_dict)
+            Etot = forward_capture(4000000, 1994 + j, param_dict)
             energy_in_middle = Etot.numpy()[1]
             cur_energy.append(energy_in_middle)
             del Etot
             dr.flush_kernel_cache()
         avg_energy = np.mean(np.array(cur_energy))
         energy.append(avg_energy)
-        rs.append(0.1 * 1.1 * r)
-        r += step_size
-        print("value: ", avg_energy)
-        
-    # print(energy)
-    np.save("sensor_opt_value.npy", np.array(energy))
-    np.save("sensor_opt_rs.npy", np.array(rs))
-    param_range = [1.0, 9.0]
-    data_points = 25
-    step_size = (param_range[1] - param_range[0]) / data_points
-    r = param_range[0]
-    energy = []
-    rs = []
-    N = 20
-    for i in range(data_points+1):
-        print("iteration i", i)
-        param_dict = {
-            "geo": FloatD(r),
-            "sig_t": FloatD(2.0)
-        }
-        cur_energy = []
-        for j in range(N):
-            Etot = forward_capture(2000000, 1994 + j, param_dict)
-            energy_in_middle = Etot.numpy()[1]
-            cur_energy.append(energy_in_middle)
-            del Etot
-            dr.flush_kernel_cache()
-        avg_energy = np.mean(np.array(cur_energy))
-        energy.append(avg_energy)
-        rs.append(0.1 * 1.1 * r)
+        rs.append(0.1 * 2.5 * r)
         r += step_size
         print("value: ", avg_energy)
         
@@ -619,10 +749,14 @@ def scan_radius():
 
 if __name__ == "__main__":
     param_dict = {
-        "geo": 1.0,
+        "geo": 1.1,
         "sig_t": FloatD(2.0)
     }
-    opt(5000, "opt_sensor", 1000000, param_dict)
+    # scan_radius()
+    id = 3
+    # opt_mesh(5000, f"opt_sensor_mesh_{id}", "D", 100000, param_dict)
+    opt_mesh_volume_constraints(5000, f"opt_sensor_mesh_vol_{id}", "D", 100000, param_dict)
+    # opt(10000, f"opt_sensor_{id}", 2000000, param_dict)
     
     
     # opt_energy_dependent_two_layers(200, 10000)

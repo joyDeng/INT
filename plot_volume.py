@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 import cv2
+from matplotlib.ticker import ScalarFormatter
 
     
 
@@ -26,13 +27,13 @@ def visualize_slice(id):
     plt.tight_layout()
     plt.show()
 
-def visualize_two(id):
-    field = np.load("{}_two_sphere_collision_density_numpy.npy".format(id))
+def visualize_two(id, name):
+    field = np.load("{:02d}_two_sphere_collision_density_avg_numpy.npy".format(id))
     vol1 = np.load("{:02d}_two_sphere_collision_density_gradients_fd_numpy.npy".format(id))
     vol2 = np.load("{:02d}_two_sphere_collision_density_gradients_ad_numpy.npy".format(id))
 
     # --- Choose slice index and orientation ---
-    z_index = vol1.shape[0] // 2 # middle slice along z-axis
+    z_index = vol1.shape[0] // 2# middle slice along z-axis
     slice1 = vol1[z_index, :, :]
     slice2 = vol2[z_index, :, :]
     field_slice = field[z_index, :, :]
@@ -40,21 +41,21 @@ def visualize_two(id):
     # print(slice2.shape, field_slice.shape)
 
     # --- Compute common color scale ---
-    vmin = min(slice1.min(), slice2.min())
-    vmax = max(slice1.max(), slice2.max())
+    vmin = slice1.min()
+    vmax = slice1.max()
     vb = max(abs(vmin), abs(vmax))
 
     # --- Set up figure ---
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
     # --- Plot first volume ---
-    im1 = axes[0].imshow(slice1, cmap='RdBu', origin='lower', vmin=-vb, vmax=vb)
+    im1 = axes[0].imshow(slice1, cmap='PuOr', origin='lower', vmin=-vb, vmax=vb)
     axes[0].set_title(f'Finite difference – Slice {z_index}')
     axes[0].axis('off')
     fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
 
     # --- Plot second volume ---
-    im2 = axes[1].imshow(slice2, cmap='RdBu', origin='lower', vmin=-vb, vmax=vb)
+    im2 = axes[1].imshow(slice2, cmap='PuOr', origin='lower', vmin=-vb, vmax=vb)
     axes[1].set_title(f'Automatic differentiation – Slice {z_index}')
     axes[1].axis('off')
     fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
@@ -62,18 +63,93 @@ def visualize_two(id):
     # --- Compute error map (absolute difference) ---
     error_map = np.sqrt(np.power(slice2 - slice1, 2.0))
 
-    im3 = axes[2].imshow(error_map, cmap='viridis', origin='lower')
+    im3 = axes[2].imshow(error_map, cmap='Purples', origin='lower')
     axes[2].set_title('Error Map |A − B|')
     axes[2].axis('off')
     fig.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
 
     im4 = axes[3].imshow(field_slice, cmap='plasma', origin='lower', vmin=0.0)
-    axes[3].set_title('fluence')
+    axes[3].set_title('volume flux')
     axes[3].axis('off')
     fig.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
     
     plt.tight_layout()
-    plt.savefig("bounce1_fdvsad_0307_50.png")
+    plt.savefig(f"{name}_{id}.png")
+    # plt.show()
+
+def visualize_fig7(id, name):
+    mpl.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+    "font.size": 24,              # SIGGRAPH body text ≈ 9pt
+    # "axes.labelsize": 28,
+    # "axes.titlesize": 26,
+    # "legend.fontsize": 24,
+    # "xtick.labelsize": 24,
+    # "ytick.labelsize": 24,
+    })
+
+    field = np.load("{:02d}_two_sphere_collision_density_avg_tr_numpy.npy".format(id))
+    vol1 = np.load("{:02d}_two_sphere_collision_density_gradients_fd_numpy.npy".format(id))
+    vol2 = np.load("{:02d}_two_sphere_collision_density_gradients_co_numpy.npy".format(id))
+    vol3 = np.load("{:02d}_two_sphere_collision_density_gradients_tr_numpy.npy".format(id))
+
+    
+
+    # --- Choose slice index and orientation ---
+    z_index = vol1.shape[0] // 2# middle slice along z-axis
+    slice1 = vol1[z_index, :, :]
+    slice2 = vol2[z_index, :, :]
+    slice3 = vol3[z_index, :, :]
+    field_slice = field[z_index, :, :]
+    print("average value", "finite element: ", np.mean(slice1), "auto differentiation: ", np.mean(slice2))
+    rmse_co_fd = np.sqrt(np.mean(np.power(slice2 - slice1, 2.0)))
+    rmse_tr_fd = np.sqrt(np.mean(np.power(slice3 - slice1, 2.0)))
+    print("RMSE co w.r.t. fd:", rmse_co_fd)
+    print("RMSE tr w.r.t. fd:", rmse_tr_fd)
+    # print(slice2.shape, field_slice.shape)
+
+    # --- Compute common color scale ---
+    vmin = slice1.min()
+    vmax = slice1.max()
+    vb = max(abs(vmin), abs(vmax))
+
+    # --- Set up figure ---
+    fig, axes = plt.subplots(1, 5, figsize=(30, 6))
+
+    # --- Plot first volume ---
+    im1 = axes[0].imshow(slice1, cmap='PuOr', origin='lower', vmin=-vb, vmax=vb)
+    axes[0].set_title(f'Ref (fd) A')
+    axes[0].axis('off')
+    fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+
+    # --- Plot second volume ---
+    im2 = axes[1].imshow(slice2, cmap='PuOr', origin='lower', vmin=-vb, vmax=vb)
+    axes[1].set_title(f'Ours Collision')
+    axes[1].axis('off')
+    fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+
+    # --- Plot second volume ---
+    im3 = axes[2].imshow(slice3, cmap='PuOr', origin='lower', vmin=-vb, vmax=vb)
+    axes[2].set_title(f'Ours Tracklength B')
+    axes[2].axis('off')
+    fig.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+
+    # --- Compute error map (absolute difference) ---
+    error_map = np.sqrt(np.power(slice3 - slice1, 2.0))
+
+    im4 = axes[3].imshow(error_map, cmap='Purples', origin='lower', vmin=0.0)
+    axes[3].set_title('Error Map |A − B|')
+    axes[3].axis('off')
+    fig.colorbar(im4, ax=axes[3], fraction=0.046, pad=0.04)
+
+    im5 = axes[4].imshow(field_slice, cmap='plasma', origin='lower', vmin=0.0)
+    axes[4].set_title('Volume flux')
+    axes[4].axis('off')
+    fig.colorbar(im5, ax=axes[4], fraction=0.046, pad=0.04)
+    
+    plt.tight_layout()
+    plt.savefig(f"{name}_{id}.png")
     # plt.show()
 
 def visualize_test():
@@ -233,66 +309,157 @@ def sliding_window_mean(values: np.ndarray, window: int = 10):
         out[i] = values[lo:hi].mean(axis=0)
     return out
 
+def set_sci(ax, axis="y", scilimits=(-3, 3), offset_text_size=18):
+    """
+    axis: "x", "y", or "both"
+    scilimits: (m, n) -> outside 10^m..10^n use scientific notation
+    """
+    if axis in ("x", "both"):
+        ax.ticklabel_format(axis="x", style="sci", scilimits=scilimits, useMathText=True)
+        fmtx = ScalarFormatter(useMathText=True)
+        fmtx.set_powerlimits(scilimits)
+        ax.xaxis.set_major_formatter(fmtx)
+        ax.xaxis.get_offset_text().set_size(offset_text_size)
+
+    if axis in ("y", "both"):
+        ax.ticklabel_format(axis="y", style="sci", scilimits=scilimits, useMathText=True)
+        fmty = ScalarFormatter(useMathText=True)
+        fmty.set_powerlimits(scilimits)
+        ax.yaxis.set_major_formatter(fmty)
+        ax.yaxis.get_offset_text().set_size(offset_text_size)
 
 def plot_saved_sensor_data_windowed(
-    value_file=TEMP_DIR + "opt_sensor_loss.npy",
-    r_file=TEMP_DIR + "opt_sensor_rs.npy",
-    out_file="sensor_opt_window_.png",
-    window: int = 100,
+    name,
+    window: int = 5,
     plot_raw: bool = False,   # set True if you want raw + smoothed
 ):
+    mpl.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+    "font.size": 28,              # SIGGRAPH body text ≈ 9pt
+    "axes.labelsize": 30,
+    "axes.titlesize": 28,
+    "legend.fontsize": 26,
+    "xtick.labelsize": 26,
+    "ytick.labelsize": 26,
+    "pdf.fonttype": 42,           # embed TrueType (required for submissions)
+    "ps.fonttype": 42,
+    "figure.constrained_layout.use": True,   # 比 tight_layout 更稳
+    "savefig.bbox": "tight",                 # 保存时裁掉外部白边
+    "savefig.pad_inches": 0.02,              # 保存时留很小的边距
+    "axes.formatter.use_mathtext": True,     # 科学计数法用 ×10^k 的 mathtext
+     "figure.constrained_layout.use": True,
+    "figure.constrained_layout.w_pad": 0.02,
+    "figure.constrained_layout.h_pad": 0.02,
+    "figure.constrained_layout.wspace": 0.02,
+    "figure.constrained_layout.hspace": 0.02,
+    })
+
+    value_file=TEMP_DIR + f"/{name}_loss.npy"
+    r_file=TEMP_DIR + f"/{name}_rs.npy"
+    out_file=f"{name}_window_.png"
+
+    error_file_mesh = TEMP_DIR + f"energy.npy"
+    error_file_mesh_vol = TEMP_DIR + f"opt_sensor_mesh_vol_3_energy.npy"
+    
     values = np.load(value_file)  # (N, G)
+    
+    errors_mesh = np.load(error_file_mesh_vol)
     r_values = np.load(r_file)
     if values.ndim != 2:
         raise ValueError(f"Expected 2D arrays (N, G). Got {values.shape}")
-
-    N, G = values.shape
+    # print(values.shape)
+    N, G = values.shape[0], values.shape[1]
     x = np.arange(N)
 
     smoothed = sliding_window_mean(values, window=window)
+    
+    e_smoothed = sliding_window_mean(errors_mesh, window=window)
     r_smoothed = sliding_window_mean(r_values, window=window)
+    # v_smoothed = sliding_window_mean(error_file_mesh_vol, window=window)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, sharex=True, figsize=(12.5, 6))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, sharex=False, figsize=(20, 6), constrained_layout=True)
+    fig.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02)
 
-    cmap = plt.get_cmap("cividis")
-    colors = cmap(np.linspace(0.25, 0.85, G))
+    for ax in (ax1, ax2, ax3):
+        ax.margins(x=0.01, y=0.05)
 
+    cmap = plt.get_cmap("plasma")
+    colors = cmap(np.linspace(0.0, 0.9, 4))
+    till_iter = 1500
+    print(r_values)
     for g in range(G):
         if plot_raw:
             ax1.plot(
-                x, values[:, g],
+                x[:till_iter], values[:till_iter, g],
                 linestyle="--", linewidth=1, alpha=0.35,
                 color=colors[g],
                 label=None if g else "Raw",
             )
 
         ax1.plot(
-            x, smoothed[:, g] - 0.99,
-            "o-", linewidth=2, markersize=4,
-            color=colors[g],
-            label=f"Group {g+1}",
+            x[:till_iter], 1.0 - smoothed[:till_iter, g],
+            "-", linewidth=3, markersize=4,
+            color=colors[g+2],
+            label=f"Radius",
         )
+
+        ax1.plot(
+            x[:till_iter], 1.0 - e_smoothed[:till_iter, g],
+            "-", linewidth=3, markersize=4,
+            color=colors[g+3],
+            label=f"Mesh",
+        )
+
+        # ax1.plot(
+        #     x[:till_iter], 
+        # )
 
     for g in range(G):
         if plot_raw:
             ax2.plot(
                 x, r_values[:, g],
-                linestyle="--", linewidth=1, alpha=0.35,
+                linestyle="--", linewidth=3, alpha=0.35,
                 color=colors[g],
                 label=None if g else "Raw",
             )
 
         ax2.plot(
-            x, r_smoothed[:, g] * 1.1 * 0.1,
-            "o-", linewidth=2, markersize=4,
-            color=colors[g],
-            label=f"Group {g+1}",
+            x[:till_iter], r_smoothed[:till_iter, g] * 2.5 * 0.1,
+            "-", linewidth=3, markersize=4,
+            color=colors[g+1],
+            label=f"Group 2",
         )
 
+   
+    # reference values
+    energies, rscales = np.load("sensor_opt_value.npy"), np.load("sensor_opt_rs.npy")
+    print(rscales)
+    ax3.plot(
+        rscales, energies,
+        linestyle="-",
+        linewidth=3,
+        color = colors[g],
+        label = "Group 2"
+    )
+    
+    set_sci(ax1, axis="y", scilimits=(-3, 3), offset_text_size=20)
+    set_sci(ax3, axis="y", scilimits=(-3, 3), offset_text_size=20)
+
     ax1.set_xlabel("Iteration")
-    ax1.set_ylabel(f"Sensor value (moving avg, window={window})")
-    ax1.legend(title="Energy group")
+    ax1.set_ylabel(f"Energy")
     ax1.grid(True, alpha=0.3)
+    ax1.legend()
+
+    ax2.set_xlabel("Iteration")
+    ax2.set_ylabel(f"Radius")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+
+    ax3.set_xlabel("Radius ")
+    ax3.set_ylabel(f"Energy")
+    ax3.grid(True, alpha=0.3)
+    ax3.legend()
 
     plt.tight_layout()
     plt.savefig(out_file, dpi=200, bbox_inches="tight")
@@ -305,18 +472,20 @@ def plot_value_sensor():
         1, 1, sharex=True, figsize=(6, 6)
     )
 
+    cmap = plt.get_cmap("RdBu")
+    colors = cmap(np.linspace(0.25, 0.85, 3))
     ax1.plot(
         xs,
         values,
-        "--s",
+        "-",
         linewidth=2,
         markersize=4,
-        # color=mts_ad,
+        color=colors[0],
         label="values",
     )
 
     plt.tight_layout()
-    plt.savefig(f"opt_sensor_values.png", bbox_inches="tight")
+    plt.savefig(f"opt_sensor_values_2.png", bbox_inches="tight")
     plt.close(fig)
     
 
@@ -544,7 +713,8 @@ def plot_with_errors_multiple_energy(name, param):
     plt.close(fig)
 
 if __name__ == "__main__":
-    # visualize_two(2)
+    # visualize_two(6, "bounce_1_")
+    visualize_fig7(7, "bounce_0_")
     # visualize_test()
     # debug_beam(2)
     # plot_with_errors_multiple_energy("torus_geo_multi_2", "offset")
@@ -553,4 +723,5 @@ if __name__ == "__main__":
     # plot_with_errors_multiple_energy("sphere_geo_multi_3", "radius")
 
     # plot_value_sensor()
-    plot_saved_sensor_data_windowed()
+    # opt_sensor_<built-in function id>_C_iter380_csg
+    # plot_saved_sensor_data_windowed("opt_sensor_<built-in function id>")

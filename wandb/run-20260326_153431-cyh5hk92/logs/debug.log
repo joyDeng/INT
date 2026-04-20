@@ -1,0 +1,20 @@
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_setup.py:_flush():81] Current SDK version is 0.25.0
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_setup.py:_flush():81] Configure stats pid to 2250427
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_init.py:setup_run_log_directory():717] Logging user logs to /home/xideng/Research/INT/wandb/run-20260326_153431-cyh5hk92/logs/debug.log
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to /home/xideng/Research/INT/wandb/run-20260326_153431-cyh5hk92/logs/debug-internal.log
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_init.py:init():844] calling init triggers
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'predict': False, 'ckpt': None, 'obj_dir': '/media/xideng/973f0610-62ab-4e4e-9192-dde2782393be1/data/geo_norm_obj', 'sdf_dir': '/media/xideng/973f0610-62ab-4e4e-9192-dde2782393be1/data/geo_sdf', 'obj': None, 'N': 64, 'max_bounce': 2, 'num_neutrons': 100000, 'cache': True, 'width': 32, 'modes': 12, 'depth': 4, 'epochs': 200, 'batch_size': 1, 'lr': 0.001, 'seed': 1994, 'save_every': 20, 'out_prefix': 'fno_flux', 'wandb_project': 'fno-geo-flux', 'wandb_run': None, 'no_wandb': False, 'vis_every': 5, 'sig_t_inner': 0.5, 'albedo_inner': 0.8, 'sig_t_shell': 0.1, 'albedo_shell': 0.9, '_wandb': {}}
+2026-03-26 15:34:31,216 INFO    MainThread:2250427 [wandb_init.py:init():892] starting backend
+2026-03-26 15:34:31,472 INFO    MainThread:2250427 [wandb_init.py:init():895] sending inform_init request
+2026-03-26 15:34:31,509 INFO    MainThread:2250427 [wandb_init.py:init():903] backend started and connected
+2026-03-26 15:34:31,527 INFO    MainThread:2250427 [wandb_init.py:init():973] updated telemetry
+2026-03-26 15:34:31,560 INFO    MainThread:2250427 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-03-26 15:34:32,152 INFO    MainThread:2250427 [wandb_init.py:init():1042] starting run threads in backend
+2026-03-26 15:34:32,278 INFO    MainThread:2250427 [wandb_run.py:_console_start():2524] atexit reg
+2026-03-26 15:34:32,278 INFO    MainThread:2250427 [wandb_run.py:_redirect():2373] redirect: wrap_raw
+2026-03-26 15:34:32,278 INFO    MainThread:2250427 [wandb_run.py:_redirect():2442] Wrapping output streams.
+2026-03-26 15:34:32,278 INFO    MainThread:2250427 [wandb_run.py:_redirect():2465] Redirects installed.
+2026-03-26 15:34:32,282 INFO    MainThread:2250427 [wandb_init.py:init():1082] run started, returning control to user process
+2026-03-26 15:34:32,283 INFO    MainThread:2250427 [wandb_watch.py:_watch():69] Watching

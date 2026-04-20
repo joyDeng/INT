@@ -1,0 +1,7 @@
+{"time":"2026-03-26T15:34:31.511662722-07:00","level":"INFO","msg":"stream: starting","core version":"0.25.0"}
+{"time":"2026-03-26T15:34:31.725615403-07:00","level":"INFO","msg":"stream: created new stream","id":"cyh5hk92"}
+{"time":"2026-03-26T15:34:31.725703749-07:00","level":"INFO","msg":"handler: started","stream_id":"cyh5hk92"}
+{"time":"2026-03-26T15:34:31.725860594-07:00","level":"INFO","msg":"stream: started","id":"cyh5hk92"}
+{"time":"2026-03-26T15:34:31.725869221-07:00","level":"INFO","msg":"writer: started","stream_id":"cyh5hk92"}
+{"time":"2026-03-26T15:34:31.725890711-07:00","level":"INFO","msg":"sender: started","stream_id":"cyh5hk92"}
+{"time":"2026-03-26T15:43:04.504752528-07:00","level":"INFO","msg":"api: retrying HTTP error","status":502,"url":"https://api.wandb.ai/files/dxjoy_china-california-institute-of-technology-caltech/fno-geo-flux/cyh5hk92/file_stream","body":"\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>502 Server Error</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Server Error</h1>\n<h2>The server encountered a temporary error and could not complete your request.<p>Please try again in 30 seconds.</h2>\n<h2></h2>\n</body></html>\n"}

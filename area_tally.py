@@ -1164,6 +1164,7 @@ def sample_and_compute_attenuation_along_ray(sceneinfo, all_its, material_spaces
     scatter_material_idx = dr.zeros(UInt, num_rays)
 
     energy_per_ray = dr.ones(FloatD, num_rays) * itinfo.radiance / num_rays
+    # un_reparam_enery_per_ray = itinfo.last_reparam / num_rays
 
     reparam_constant = dr.zeros(FloatD, num_rays)
     distance = dr.zeros(FloatD, num_rays)
@@ -1245,7 +1246,7 @@ def sample_and_compute_attenuation_along_ray(sceneinfo, all_its, material_spaces
 
     if save_beam:
         if bounceIdx == 0:
-            vaccum_beams = Beams(mi.Point3f(itinfo.ray_current.o), mi.Point3f(dr.detach(itinfo.ray_current.o + dr.inf * ray.d)), ray.d, dr.inf, dr.detach(tv & active), dr.zeros(Float, num_rays), energy_per_ray, bounceIdx)
+            vaccum_beams = Beams(mi.Point3f(itinfo.ray_current.o), mi.Point3f(dr.detach(itinfo.ray_current.o + dr.inf * ray.d)), ray.d, dr.inf, dr.detach(tv & itinfo.active), dr.zeros(Float, num_rays), energy_per_ray, bounceIdx)
             beams.append(vaccum_beams)
         exit_beams = Beams(mi.Point3f(ray.o), mi.Point3f(ray.o + dr.inf * ray.d), ray.d, dr.inf, dr.detach(sample_active & itinfo.active & (~numerical_mask)), reparam_constant, energy_per_ray, bounceIdx)
         beams.append(exit_beams)
@@ -1315,35 +1316,54 @@ def net_voxel(cur_xyz_id, exit_step, resolution):
     return net_voxel_id, stop_march
 
 def accumulate_photon_point(beam_list, resolution, boundingbox, bounceid=-1):
+    dr.make_opaque(boundingbox)
+    dr.make_opaque(resolution)
+    sol_vox_reso = resolution + mi.Vector3i(1)
     lbb = boundingbox[0]
     rtf = boundingbox[1]
-    
     stepsizes = (rtf - lbb) / resolution
-    all_voxel = mi.UInt32(resolution.x * resolution.y * resolution.z)
-
-    voxels = dr.zeros(FloatD, all_voxel)
-    voxel_volume = FloatD(stepsizes.x * stepsizes.y * stepsizes.z)
+    lb = mi.Vector3f(lbb)
+    rt = mi.Vector3f(rtf)
+    dr.make_opaque(stepsizes)
+    dr.make_opaque(bounceid)
     
-    
-    for bid in range(len(beam_list)):
-        beams = beam_list[bid]
+    all_voxel = mi.UInt32((resolution.x * resolution.y * resolution.z))
+    solution_voxel_number = mi.UInt32(((sol_vox_reso.x)* (sol_vox_reso.y) * (sol_vox_reso.z)))
 
-        active_bid = True
-        if bounceid > -1:
-            active_bid = (beams.bounceIdx == bounceid)
+    # voxels = dr.zeros(FloatD, all_voxel)
+    sols = dr.zeros(FloatD, all_voxel)
+    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)
 
-        cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
-        valid_ray = (beams.length != dr.inf) & beams.active & beams.collision
+    max_grid = resolution.x + resolution.y + resolution.z 
+    len_beam_list = len(beam_list)
+    beam_list[0].compress()
+    concat_beams = beam_list[0]
+    for i in range(1, len_beam_list):
+        beam_list[i].compress()
+        concat_beams.concat(beam_list[i])
+
+    cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.end - lbb) / stepsizes))
+
+    # for bid in range(len(beam_list)):
+    #     beams = beam_list[bid]
+
+    #active_bid = True
+#
+    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    if bounceid > -1:
+        active_bid = (concat_beams.bounceIdx == bounceid)
+
+    #     cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
+    valid_ray = (concat_beams.length != dr.inf) & concat_beams.active & concat_beams.collision
         
-        vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+    vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
 
-        contribution =  beams.color / voxel_volume / beams.cross_section
-        valid_mask = (~outside) & valid_ray & active_bid
+    contribution =  concat_beams.color * concat_beams.constant / voxel_volume / concat_beams.cross_section
+    valid_mask = (~outside) & valid_ray & active_bid
             
-        dr.scatter_add(voxels, contribution, vid, valid_mask)
-        bid += 1
+    dr.scatter_add(sols, contribution, vid, valid_mask)
 
-    return voxels
+    return sols
 
 def dot_axis(c):
     dot_x = dr.dot(c, mi.Vector3f(1, 0, 0))
@@ -1473,15 +1493,12 @@ def accumulate_photon_beams_hat(beam_list, resolution, boundingbox, bounceid):
     # print(voxels)
     return sols
 
-
-def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=-1):
+def accumulate_photon_beam_with_sensor_beam(beam_list, resolution, boundingbox, bounceid=-1):
     dr.make_opaque(boundingbox)
     dr.make_opaque(resolution)
     lbb = boundingbox[0]
     rtf = boundingbox[1]
     stepsizes = (rtf - lbb) / resolution
-    # lb = mi.Vector3f(lbb)
-    # rt = mi.Vector3f(rtf)
     dr.make_opaque(stepsizes)
     dr.make_opaque(bounceid)
     
@@ -1525,15 +1542,143 @@ def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=
         vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
         dist_in_voxel, exit_step = concat_beams.intersect3D(lb, rt)
         valid_mask = (~outside) & concat_beams.active & active_march & active_bid
+        # dist_in_voxel = dr.select(dist_in_voxel < 0.0, 0.0, dist_in_voxel)
         dist_detach = dr.detach(dist_in_voxel)
+        
 
-        contribution_a = dist_in_voxel * concat_beams.color / voxel_volume
-        contribution_d = dist_detach * concat_beams.color / voxel_volume
-        dr.scatter_add(voxels, contribution_a, vid, valid_mask & bounce_1)
+        # correction
+        # this is working
+        # contribution_a = dist_in_voxel * concat_beams.color / voxel_volume
+
+        contribution_val = dist_in_voxel * concat_beams.color 
+        # contribution_val = dist_detach * concat_beams.color * concat_beams.constant
+
+        
+        # contribution_val_gradient = dr.detach(dist_in_voxel) * concat_beams.color * concat_beams.constant
+        # dist_in_voxel * concat_beams.color  * concat_beams.constant - dr.detach(dist_in_voxel) * concat_beams.color  * concat_beams.constant + dr.detach(dist_in_voxel) * concat_beams.color
+        # dr.replace_grad(contribution_val, contribution_val_gradient)
+        contribution_a = contribution_val
+        # dr.detach(contribution_val) - dr.detach(contribution_val_gradient) + contribution_val_gradient
+        #  + (-dist_in_voxel + dist_detach) * dr.detach(concat_beams.color))
+        # (dist_in_voxel * concat_beams.constant) * dr.detach(concat_beams.color)  / voxel_volume +  dr.detach(dist_in_voxel * concat_beams.constant) * (concat_beams.color)  / voxel_volume
+        #  - dist_in_voxel + dist_detach
+
+
+        contribution_d = dist_detach * concat_beams.constant * concat_beams.color / voxel_volume
+        dr.scatter_add(voxels, contribution_a / voxel_volume, vid, valid_mask & bounce_1)
         dr.scatter_add(voxels, contribution_d, vid, valid_mask & bounce_0)
         cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
         active_march = active_march & (~stop_march)
         it += 1
+
+    # active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    # if bounceid > -1:
+    #     active_bid = (concat_beams.bounceIdx == bounceid)
+
+    #     #     cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
+    # valid_c_ray = (concat_beams.length != dr.inf) & concat_beams.active & concat_beams.collision
+            
+    # vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+
+    # contribution =  concat_beams.color * concat_beams.constant / voxel_volume / concat_beams.cross_section
+    # valid_c_mask = (~outside) & valid_c_ray & active_bid
+                
+    # dr.scatter_add(voxels, -contribution + dr.detach(contribution), vid, valid_c_mask)
+    
+    return voxels
+
+
+def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=-1):
+    dr.make_opaque(boundingbox)
+    dr.make_opaque(resolution)
+    lbb = boundingbox[0]
+    rtf = boundingbox[1]
+    stepsizes = (rtf - lbb) / resolution
+    dr.make_opaque(stepsizes)
+    dr.make_opaque(bounceid)
+    
+    all_voxel = mi.UInt32((resolution.x * resolution.y * resolution.z))
+
+    voxels = dr.zeros(FloatD, all_voxel)
+    empty = dr.zeros(FloatD, all_voxel)
+    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)
+    max_grid = resolution.x + resolution.y + resolution.z 
+    
+    # max_grid = mi.UInt32(m.numpy()[0])
+    len_beam_list = len(beam_list)
+    
+    beam_list[0].compress()
+    concat_beams = beam_list[0]
+
+    # save before compress
+    for i in range(1, len_beam_list):
+        beam_list[i].compress()
+        concat_beams.concat(beam_list[i])
+
+    cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.start - lbb) / stepsizes))
+    active_march = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    outside = dr.full(mi.Bool, False, dr.width(concat_beams.start))
+    exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams.start))
+    dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams.start)) 
+    vid = dr.zeros(mi.UInt32, dr.width(concat_beams.start))
+    contribution = dr.zeros(FloatD, dr.width(concat_beams.start))
+    bounce_0 = concat_beams.bounceIdx == mi.UInt32(0)
+    bounce_1 = concat_beams.bounceIdx > mi.UInt32(0)
+    
+    if bounceid > -1:
+        active_bid = (concat_beams.bounceIdx == mi.UInt32(bounceid))
+        
+    it = mi.UInt32(0)
+    dr.make_opaque(it)
+    
+    while it < max_grid:
+        dr.make_opaque(cur_xyz_id)
+        vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+        dist_in_voxel, exit_step = concat_beams.intersect3D(lb, rt)
+        valid_mask = (~outside) & concat_beams.active & active_march & active_bid
+        # dist_in_voxel = dr.select(dist_in_voxel < 0.0, 0.0, dist_in_voxel)
+        dist_detach = dr.detach(dist_in_voxel)
+        
+
+        # correction
+        # this is working
+        # contribution_a = dist_in_voxel * concat_beams.color / voxel_volume
+
+        contribution_val = dist_in_voxel * concat_beams.color 
+        # contribution_val = dist_detach * concat_beams.color * concat_beams.constant
+
+        
+        # contribution_val_gradient = dr.detach(dist_in_voxel) * concat_beams.color * concat_beams.constant
+        # dist_in_voxel * concat_beams.color  * concat_beams.constant - dr.detach(dist_in_voxel) * concat_beams.color  * concat_beams.constant + dr.detach(dist_in_voxel) * concat_beams.color
+        # dr.replace_grad(contribution_val, contribution_val_gradient)
+        contribution_a = contribution_val
+        # dr.detach(contribution_val) - dr.detach(contribution_val_gradient) + contribution_val_gradient
+        #  + (-dist_in_voxel + dist_detach) * dr.detach(concat_beams.color))
+        # (dist_in_voxel * concat_beams.constant) * dr.detach(concat_beams.color)  / voxel_volume +  dr.detach(dist_in_voxel * concat_beams.constant) * (concat_beams.color)  / voxel_volume
+        #  - dist_in_voxel + dist_detach
+
+
+        contribution_d = dist_detach * concat_beams.constant * concat_beams.color / voxel_volume
+        dr.scatter_add(voxels, contribution_a / voxel_volume, vid, valid_mask & bounce_1)
+        dr.scatter_add(voxels, contribution_d, vid, valid_mask & bounce_0)
+        cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
+        active_march = active_march & (~stop_march)
+        it += 1
+
+    # active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+    # if bounceid > -1:
+    #     active_bid = (concat_beams.bounceIdx == bounceid)
+
+    #     #     cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
+    # valid_c_ray = (concat_beams.length != dr.inf) & concat_beams.active & concat_beams.collision
+            
+    # vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
+
+    # contribution =  concat_beams.color * concat_beams.constant / voxel_volume / concat_beams.cross_section
+    # valid_c_mask = (~outside) & valid_c_ray & active_bid
+                
+    # dr.scatter_add(voxels, -contribution + dr.detach(contribution), vid, valid_c_mask)
     
     return voxels
 
@@ -1583,8 +1728,9 @@ def render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, reparam
     number_of_energy_group = sceneinfo.scm.energy_groups
     Etot = dr.zeros(FloatD, number_of_energy_group)
     radiance = dr.zeros(FloatD, num_neutron) + 1.0 
-    sample_weight = dr.zeros(FloatD, dr.width(ray_current)) + 1.0
+    sample_weight = dr.zeros(FloatD, num_neutron) + 1.0
     energy_group_idx = dr.zeros(UInt, num_neutron) # from energy group idx 0 to n, the energy goes from high to low
+    last_reparam = dr.ones(FloatD, num_neutron)
     active = True
     # travel_trough_material_boundary = False
 
@@ -1592,7 +1738,7 @@ def render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, reparam
     # 
     # class IterProp:
     # def __init__(self, radiance, energy_group_idx, ray_current, active)
-    itinfo = IterProp(radiance, energy_group_idx, ray_current, active)
+    itinfo = IterProp(radiance, energy_group_idx, ray_current, active, last_reparam)
 
     while bounceIdx < MAX_BOUNCE:
         all_its, material_spaces = dr.detach(scene_material_intersect(sceneinfo.scene, itinfo.ray_current, sceneinfo.scm, itinfo.active))
@@ -1606,8 +1752,8 @@ def render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, reparam
             incremental = (ats.attenuation * radiance & itinfo.active)
         else:
             # fp = 1.0 / (2.0 * dr.pi)
-            fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
-            # fp = 1.0
+            # fp = dr.detach(hg(dr.dot(ray_current.d, wi_theta), AVERAGE_COS))
+            fp = 1.0
             incremental = ((ats.attenuation * radiance * fp / dr.detach(fp) & itinfo.active))
 
         # add the weight to corresponding energy group
@@ -1627,11 +1773,11 @@ def render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, reparam
         
         # phase function, sample a direction
         # better sample from the source instead of sample from the phase function
-        wo = sample_direction_hg(sceneinfo.rng, itinfo.ray_current.d, AVERAGE_COS)
+        # wo = sample_direction_hg(sceneinfo.rng, itinfo.ray_current.d, 0.0)
         # 2D version, keep z = 0 for all computation
-        # wo = phase_2d(sample_float_32(rng))
+        wo = phase_2d(sample_float_32(sceneinfo.rng))
         # wo.y = dr.zeros(FloatD, dr.width(wo)) + 1.0
-        # wo.x = dr.zeros(FloatD, dr.width(wo)) + 3.0
+        # wo.x = dr.zeros(FloatD, dr.width(wo)) + 2.0
         # wo.x = dr.zeros(FloatD, dr.width(wo)) + 0.0
         wo = wo / dr.norm(wo)
 
@@ -1640,6 +1786,7 @@ def render_nuetron_in_csg_shape_energy_dependent(sceneinfo, ray_current, reparam
         itinfo.energy_group_idx, group_pdf = sample_next_energy_group(sceneinfo.rng, ats.feature.phase_cdfs, sceneinfo.scm.energy_groups)
         
         itinfo.radiance *= (ats.attenuation_till_scatter) * (cross_section_reparam_t * ats.feature.alb) / dr.detach(pdf)
+        itinfo.last_reparam *= itinfo.radiance * ats.feature.ext * ats.feature.alb / dr.detach(ats.pdf)
         # beam_weight *= (attenuation_till_scatter) * cross_section_reparam_t * feature.alb / dr.detach(pdf)
         # sample_weight *= attenuation_till_scatter / dr.detach(pdf) * (cross_section_reparam_t * feature.alb)
         # beam_weight *= dr.detach((attenuation_till_scatter / dr.detach(pdf)) * (cross_section_reparam_t * feature.alb))

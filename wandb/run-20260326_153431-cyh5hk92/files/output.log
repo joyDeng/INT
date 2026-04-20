@@ -1,0 +1,2 @@
+/home/xideng/anaconda3/envs/mts/lib/python3.9/site-packages/wandb/integration/torch/wandb_torch.py:199: UserWarning: Casting complex values to real discards the imaginary part (Triggered internally at /pytorch/aten/src/ATen/native/Copy.cpp:307.)
+  flat = flat.type(torch.cuda.FloatTensor)

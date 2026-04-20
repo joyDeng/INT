@@ -257,11 +257,12 @@ class SceneMaterial:
         # terminate_ray = mask_invalid | exit_ray
 
 class IterProp:
-    def __init__(self, radiance, energy_group_idx, ray_current, active):
+    def __init__(self, radiance, energy_group_idx, ray_current, active, last_reparam = None):
         self.radiance = radiance
         self.energy_group_idx = energy_group_idx
         self.ray_current = ray_current
         self.active = active
+        self.last_reparam = last_reparam
 
 class RayGeoIts:
     def __init__(self, all_its, material_spaces, ray_current, vertices_list, faces_list):
@@ -833,8 +834,9 @@ class Beams():
         
         self.active = dr.cuda.ad.Bool(active)
         
-        F = dr.exp(multiply) 
-        self.color = FloatD(F / dr.detach(F) * color)
+        F = dr.exp(multiply)
+        self.constant = FloatD(F / dr.detach(F))
+        self.color = FloatD(color)
         self.bounceIdx = dr.zeros(Int, self.num_beams) + bounceIdx        
         
         # init material related
@@ -870,6 +872,7 @@ class Beams():
 
         length = dr.gather(type(self.length), self.length, valid_mask)
         color = dr.gather(type(self.color), self.color, valid_mask)
+        constant = dr.gather(type(self.constant), self.constant, valid_mask)
         cross_section = dr.gather(type(self.cross_section), self.cross_section, valid_mask)
         albedo = dr.gather(type(self.albedo), self.albedo, valid_mask)
         collision = dr.gather(type(self.collision), self.collision, valid_mask)
@@ -880,6 +883,7 @@ class Beams():
         self.albedo = albedo
         self.collision = collision
         self.bounceIdx = bounceIdx
+        self.constant = constant
         
         
 
@@ -901,6 +905,7 @@ class Beams():
         self.albedo             = dr.concat([self.albedo, c.albedo])
         self.collision          = dr.concat([self.collision, c.collision])
         self.bounceIdx          = dr.concat([self.bounceIdx, c.bounceIdx])
+        self.constant           = dr.concat([self.constant, c.constant])
 
 
     def end_point_in_box(self, bl, tr):
@@ -1012,6 +1017,8 @@ class Beams():
 
         start = mi.Point3f(self.start)
         end = mi.Point3f(self.end)
+
+        
         
         
         # inside_start = (bl.x <= start.x) & (tr.x >= start.x) & (bl.y <= start.y) & (tr.y >= start.y) & (bl.z <= start.z) & (tr.z >= start.z)
@@ -1083,7 +1090,8 @@ class Beams():
         distance = dr.select(inside_end & inside_start, self.length, distance)
 
         distance_32 = dr.select(self.active, distance, FloatD(0.0))
-        
+        # print("\n start, end", start, end)
+        # print("distance,", distance_32, bl, tr)
         return distance_32, exit_step
 
     def intersect(self, bl, tr):
@@ -1092,22 +1100,23 @@ class Beams():
         """
 
         distance = dr.zeros(Float, dr.width(self.start))
+        self.length = dr.norm(self.start - self.end)
         
         inside_start = (bl.x <= self.start.x) & (tr.x >= self.start.x) & (bl.y <= self.start.y) & (tr.y >= self.start.y)
         inside_end = (bl.x < self.end.x) & (tr.x >= self.end.x) & (bl.y < self.end.y) & (tr.y >= self.end.y)
 
-        dir = self.end - self.start
-        dir = dir / dr.norm(dir)
+        direction = self.end - self.start
+        direction = direction / dr.norm(direction)
         # intersect with x=left
-        d_tx_left = (bl.x - self.start.x) / dir.x
-        d_tx_right = (tr.x - self.start.x) / dir.x
-        d_ty_bot = (bl.y - self.start.y) / dir.y
-        d_ty_top = (tr.y - self.start.y) / dir.y
+        d_tx_left = (bl.x - self.start.x) / direction.x
+        d_tx_right = (tr.x - self.start.x) / direction.x
+        d_ty_bot = (bl.y - self.start.y) / direction.y
+        d_ty_top = (tr.y - self.start.y) / direction.y
 
-        ptxl = d_tx_left * dir + self.start
-        ptxr = d_tx_right * dir + self.start
-        ptyb = d_ty_bot * dir + self.start
-        ptyt = d_ty_bot * dir + self.start
+        ptxl = d_tx_left * direction + self.start
+        ptxr = d_tx_right * direction + self.start
+        ptyb = d_ty_bot * direction + self.start
+        ptyt = d_ty_bot * direction + self.start
 
         txl_valid = (ptxl.y > bl.y) & (ptxl.y < tr.y) & (d_tx_left > 0.0) & (d_tx_left < self.length)
         txr_valid = (ptxr.y > bl.y) & (ptxr.y < tr.y) & (d_tx_right > 0.0) & (d_tx_right < self.length)
@@ -1269,7 +1278,7 @@ def get_transmittance_value(distance, boundary, s1, s2, step):
 #     albedo = 0.9
 #     albedo = 0.95
 
-#     direction = dr.zeros(mi.Vector3f, number_neutron)
+#     directionection = dr.zeros(mi.Vector3f, number_neutron)
 #     origin = dr.zeros(mi.Point3f, number_neutron)
 #     constant = intensity / number_neutron
 
@@ -1331,8 +1340,8 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
 
     
     step = (rt - lb) / resolution
-    beams = Beams(origin, end_point)
-    beams2 = Beams(origin + direction * A, end_point_2)
+    beams = Beams(dr.detach(origin), dr.detach(end_point), mi.Vector3f(1.0, 0.0, 0.0), dr.detach(A))
+    beams2 = Beams(dr.detach(origin + direction * A), dr.detach(end_point_2), mi.Vector3f(1.0, 0.0, 0.0), dr.detach(dr.norm(end_point_2 - origin)))
 
     voxel_volume = step.x * step.y
         
@@ -1396,7 +1405,7 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     dr.forward(B)
     base_grad_image = dr.grad(base_line) 
     
-    fig, ax = plt.subplots(2, 3, figsize=(11, 6))
+    fig, ax = plt.subplots(1, 6, figsize=(42, 6))
 
     gimg = mi.Bitmap(grad_image.numpy().reshape(resolution, resolution))
     gimgfd = mi.Bitmap(gradient_fd.numpy().reshape(resolution, resolution))
@@ -1407,16 +1416,16 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     # cosntat = mi.Bitmap((gradient_fd / grad_image).numpy().reshape(resolution, resolution))
     # cosntat.write("ratio.exr")
     
-    viridis = cm.get_cmap('PiYG', 256)
-    value_cmap = cm.get_cmap('hot', 256)
-    grad_plot = ax[1][0].imshow(grad_image.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis, extent=[-1,1,-1,1])
-    img_plot = ax[0][0].imshow(img, cmap=value_cmap, vmin = 0, vmax = 5, ) 
+    viridis = plt.get_cmap('GnBu', 256)
+    value_cmap = plt.get_cmap('inferno', 256)
+    grad_plot = ax[5].imshow(grad_image.numpy().reshape(resolution, resolution), vmin = 0, vmax = 4, cmap=viridis, extent=[-1,1,-1,1])
+    img_plot = ax[2].imshow(img, cmap=value_cmap, vmin = 0, vmax = 5, ) 
 
-    ana_plot = ax[0][1].imshow(analytic_value.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
-    grad_fd_plot = ax[1][1].imshow(gradient_fd.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis, extent=[-1,1,-1,1])
+    ana_plot = ax[0].imshow(analytic_value.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    grad_fd_plot = ax[3].imshow(gradient_fd.numpy().reshape(resolution, resolution), vmin = 0, vmax = 4, cmap=viridis, extent=[-1,1,-1,1])
 
-    baseline_plot = ax[0][2].imshow(base_line.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
-    baseline_grad_plot = ax[1][2].imshow(base_grad_image.numpy().reshape(resolution, resolution), vmin = -5, vmax = 5, cmap=viridis,  extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    baseline_plot = ax[1].imshow(base_line.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
+    baseline_grad_plot = ax[4].imshow(base_grad_image.numpy().reshape(resolution, resolution), vmin = 0, vmax = 4, cmap=viridis,  extent=[-1,1,-1,1]) #vmin=0, vmax=1
 
     # ax[0][0].set_title(label="gradients w.r.t boundary position", 
     #          fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
@@ -1430,16 +1439,35 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     #          y=1.05,
     #          pad=10)
     
-    fig.colorbar(grad_plot, ax=ax[1][0])
-    fig.colorbar(img_plot, ax=ax[0][0])
-    fig.colorbar(ana_plot, ax=ax[0][1])
-    fig.colorbar(grad_fd_plot, ax=ax[1][1])
-    fig.colorbar(baseline_plot, ax=ax[0][2])
-    fig.colorbar(baseline_grad_plot, ax=ax[1][2])
+    fig.colorbar(grad_plot, ax=ax[5])
+    fig.colorbar(img_plot, ax=ax[2])
+    fig.colorbar(ana_plot, ax=ax[1])
+    fig.colorbar(grad_fd_plot, ax=ax[4])
+    fig.colorbar(baseline_plot, ax=ax[0])
+    fig.colorbar(baseline_grad_plot, ax=ax[3])
     
 
+    ana_flux = analytic_value.numpy().flatten()
+    co_flux  = base_line.numpy().flatten()
+    tr_flux  = img.flatten()
+    ana_grad = gradient_fd.numpy().flatten()
+    co_grad  = base_grad_image.numpy().flatten()
+    tr_grad  = grad_image.numpy().flatten()
+
+    rmse_co_flux = np.mean((co_flux - ana_flux) ** 2) / np.mean(ana_flux ** 2)
+    rmse_tr_flux = np.mean((tr_flux - ana_flux) ** 2) / np.mean(ana_flux ** 2)
+    rmse_co_grad = np.mean((co_grad - ana_grad) ** 2) / np.mean(ana_grad ** 2)
+    rmse_tr_grad = np.mean((tr_grad - ana_grad) ** 2) / np.mean(ana_grad ** 2)
+
+    print("Relative MSE (flux)  — collision vs analytic:   ", rmse_co_flux)
+    print("Relative MSE (flux)  — tracklength vs analytic: ", rmse_tr_flux)
+    print("Relative MSE (grad)  — collision vs analytic:   ", rmse_co_grad)
+    print("Relative MSE (grad)  — tracklength vs analytic: ", rmse_tr_grad)
+
     fig.legend()
-    plt.show()
+    plt.tight_layout()
+
+    plt.savefig("1d-tracklength.png")
 
 
 
@@ -1526,7 +1554,7 @@ def intersect_beam_3d():
     
 if __name__ == "__main__":
     #intersect_beam_3d()
-    tracklength_test_2D(-0.25, 0.1, 10, 500000, 30, 10.0)
+    tracklength_test_2D(-0.25, 0.1, 1, 4000, 30, 10.0)
     # test_tracklength_1D(0.7, 1.0, 1, 100, 1.0)
     # test1()
     # test_TensorXf(3, 4)

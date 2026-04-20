@@ -1,0 +1,26 @@
+Traceback (most recent call last):
+  File "/home/xideng/Research/INT/fno_geo_flux.py", line 678, in <module>
+    train(args)
+  File "/home/xideng/Research/INT/fno_geo_flux.py", line 471, in train
+    for x_in, y_out, _ in train_loader:
+  File "/home/xideng/anaconda3/envs/mts/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 734, in __next__
+    data = self._next_data()
+  File "/home/xideng/anaconda3/envs/mts/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 790, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "/home/xideng/anaconda3/envs/mts/lib/python3.9/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/xideng/anaconda3/envs/mts/lib/python3.9/site-packages/torch/utils/data/_utils/fetch.py", line 52, in <listcomp>
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+  File "/home/xideng/Research/INT/fno_geo_flux.py", line 279, in __getitem__
+    return self._load_one((idx + attempt) % len(self.obj_paths))
+  File "/home/xideng/Research/INT/fno_geo_flux.py", line 296, in _load_one
+    y_out = self._get_flux(obj_path, params, render_seed)  # (1, N, N, N)
+  File "/home/xideng/Research/INT/fno_geo_flux.py", line 313, in _get_flux
+    flux_dr = rgv.render_flux_voxels(
+  File "/home/xideng/Research/INT/render_geo_voxels.py", line 246, in render_flux_voxels
+    voxels = accumulate_photon_beams_faster(beam_list, resolution,
+  File "/home/xideng/Research/INT/area_tally.py", line 1521, in accumulate_photon_beams_faster
+    beam_list[i].compress()
+  File "/home/xideng/Research/INT/csg.py", line 867, in compress
+    end = dr.gather(type(self.end), self.end, valid_mask)
+KeyboardInterrupt
