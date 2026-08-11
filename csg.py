@@ -843,6 +843,13 @@ class Beams():
         self.cross_section = dr.zeros(FloatD, self.num_beams)
         self.albedo = dr.zeros(FloatD, self.num_beams)
         self.collision = dr.cuda.ad.Bool(collision)
+
+    
+    def sample_point_on_beam(self, rng):
+        dist = rng.next_float() * self.length
+        dr.eval(dist, rng)
+        pos = self.start + dist * self.dir
+        return pos
         
 
     def set_material(self, cross_section, albedo, detach_mask):
@@ -1018,9 +1025,6 @@ class Beams():
         start = mi.Point3f(self.start)
         end = mi.Point3f(self.end)
 
-        
-        
-        
         # inside_start = (bl.x <= start.x) & (tr.x >= start.x) & (bl.y <= start.y) & (tr.y >= start.y) & (bl.z <= start.z) & (tr.z >= start.z)
         inside_start = in_rage_c(bl.x, start.x, tr.x) & in_rage_c(bl.y, start.y, tr.y) & in_rage_c(bl.z, start.z, tr.z)
         # inside_end = (bl.x <= start.x) & (tr.x >= start.x) & (bl.y <= start.y) & (tr.y >= start.y) & (bl.z <= start.z) & (tr.z >= start.z)
@@ -1426,18 +1430,6 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
 
     baseline_plot = ax[1].imshow(base_line.numpy().reshape(resolution, resolution), vmin = 0, vmax = 5, cmap=value_cmap, extent=[-1,1,-1,1]) #vmin=0, vmax=1
     baseline_grad_plot = ax[4].imshow(base_grad_image.numpy().reshape(resolution, resolution), vmin = 0, vmax = 4, cmap=viridis,  extent=[-1,1,-1,1]) #vmin=0, vmax=1
-
-    # ax[0][0].set_title(label="gradients w.r.t boundary position", 
-    #          fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
-    #          loc='center',
-    #          y=1.05,
-    #          pad=10)
-    
-    # ax[0][1].set_title(label="scattering density", 
-    #          fontdict={'fontsize': 16, 'fontweight': 'bold', 'color': 'darkred'},
-    #          loc='center',
-    #          y=1.05,
-    #          pad=10)
     
     fig.colorbar(grad_plot, ax=ax[5])
     fig.colorbar(img_plot, ax=ax[2])
@@ -1468,7 +1460,6 @@ def tracklength_test_2D(a, sigma_t1, sigma_t2, number_neutron, resolution, inten
     plt.tight_layout()
 
     plt.savefig("1d-tracklength.png")
-
 
 
 def test1():
@@ -1554,7 +1545,8 @@ def intersect_beam_3d():
     
 if __name__ == "__main__":
     #intersect_beam_3d()
-    tracklength_test_2D(-0.25, 0.1, 1, 4000, 30, 10.0)
+    # tracklength_test_2D(-0.25, 0.1, 1, 4000, 30, 10.0)
+    tracklength_test_2D_one_scatter(-0.25, 0.1, 1, 4000, 30, 10.0)
     # test_tracklength_1D(0.7, 1.0, 1, 100, 1.0)
     # test1()
     # test_TensorXf(3, 4)

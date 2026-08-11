@@ -1219,13 +1219,14 @@ def two_sphere_get_spatial_distribution(num_neutrons, Offset, seed, resolution, 
     dr.make_opaque(seed)
     rng = mi.PCG32(size=num_neutrons, initstate=seed)
     dr.make_opaque(rng)
-    # set up tally that exit the shape
+    # set up tally that exit th
+    # e shape
   
     # generate rays
     ray_vec, ray_origin = dr.zeros(mi.Vector3f, num_neutrons), dr.zeros(mi.Point3f, num_neutrons)
     ray_origin.x = -3.0
     # ray_origin.y = 0.0
-    # ray_origin.y = sample_float_32(rng) * 4.0 - 2.0
+    ray_origin.y = sample_float_32(rng) * 4.0 - 2.0
     # random_cos = sample_float_32(rng) * 2.0 - 1.0
     # ray_vec.x += dr.sqrt(1.0 - random_cos * random_cos)
     # ray_vec.y += random_cos
@@ -1417,7 +1418,7 @@ if __name__ == "__main__":
     seed = 1991
     # v = np.zeros(1)
     # for i in range(12000):
-    two_sphere_get_spatial_gradient(100000, seed, file_id=10, epho=10, bid=-1)
+    two_sphere_get_spatial_gradient(100000, seed, file_id=14, epho=10, bid=-1)
     # print(v)
     # test_track_length(20000, 0.1, "18")
     # test_kernel(1000, 4)

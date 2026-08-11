@@ -26,9 +26,8 @@ from constant import DATA_DIR
 # dr.set_flag(dr.JitFlag.Debug, True)
 # dr.set_log_level(dr.LogLevel.Info)
 
-
 NUMBER_NEUTRONS = 100000
-MAX_BOUNCE = 5
+MAX_BOUNCE = 4
 TOT_CROSS_SECTION_T = 1.5
 TOT_CROSS_SECTION_A = 0.15
 AVERAGE_COS = mi.Float(0.0)
@@ -1279,6 +1278,19 @@ def get_voxel(startpoint, lbb, steps, resolution):
     outside = (xyz_id.x > (resolution.x-1)) | (xyz_id.y > (resolution.y-1)) | (xyz_id.z > (resolution.z-1)) | (xyz_id.x < 0) | (xyz_id.y < 0) | (xyz_id.z < 0) 
     return vid, lb, rt, xyz_id, outside
 
+def pos_of_sensor_lower(lbb, vid, res, steps):
+    xid, yid, zid = get_xyz(vid, res)
+    xyz = mi.Vector3f(xid, yid, zid)
+    pos = xyz * steps + lbb
+    return pos
+
+
+def get_xyz(vid, res):
+    xid = vid % (res.z * res.y)
+    yid = vid % (res.x * res.z)
+    zid = vid % (res.x * res.y)
+    return xid, yid, zid
+
 def get_sol_id(xyzid, reso):
     vid = xyzid.z * reso.x * reso.y + xyzid.y * reso.x + xyzid.x
     outside = (xyzid.x > (reso.x-mi.Int32(1))) | (xyzid.y > (reso.y-mi.Int32(1))) | (xyzid.z > (reso.z-mi.Int32(1))) | (xyzid.x < mi.Int32(0)) | (xyzid.y < mi.Int32(0)) | (xyzid.z < mi.Int32(0)) 
@@ -1493,99 +1505,70 @@ def accumulate_photon_beams_hat(beam_list, resolution, boundingbox, bounceid):
     # print(voxels)
     return sols
 
-def accumulate_photon_beam_with_sensor_beam(beam_list, resolution, boundingbox, bounceid=-1):
-    dr.make_opaque(boundingbox)
-    dr.make_opaque(resolution)
-    lbb = boundingbox[0]
-    rtf = boundingbox[1]
-    stepsizes = (rtf - lbb) / resolution
-    dr.make_opaque(stepsizes)
-    dr.make_opaque(bounceid)
+# def accumulate_photon_beam_with_sensor_beam(beam_list, resolution, boundingbox, bounceid=-1):
+#     dr.make_opaque(boundingbox)
+#     dr.make_opaque(resolution)
+#     lbb = boundingbox[0]
+#     rtf = boundingbox[1]
+#     stepsizes = (rtf - lbb) / resolution
+#     dr.make_opaque(stepsizes)
+#     dr.make_opaque(bounceid)
     
-    all_voxel = mi.UInt32((resolution.x * resolution.y * resolution.z))
+#     all_voxel = mi.UInt32((resolution.x * resolution.y * resolution.z))
 
-    voxels = dr.zeros(FloatD, all_voxel)
-    empty = dr.zeros(FloatD, all_voxel)
-    voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)
-    max_grid = resolution.x + resolution.y + resolution.z 
+#     voxels = dr.zeros(FloatD, all_voxel)
+#     empty = dr.zeros(FloatD, all_voxel)
+#     voxel_volume = (stepsizes.x * stepsizes.y * stepsizes.z)
+#     max_grid = resolution.x * resolution.y * resolution.z 
     
-    # max_grid = mi.UInt32(m.numpy()[0])
-    len_beam_list = len(beam_list)
+#     # max_grid = mi.UInt32(m.numpy()[0])
+#     len_beam_list = len(beam_list)
     
-    beam_list[0].compress()
-    concat_beams = beam_list[0]
+#     beam_list[0].compress()
+#     concat_beams = beam_list[0]
 
-    # save before compress
-    for i in range(1, len_beam_list):
-        beam_list[i].compress()
-        concat_beams.concat(beam_list[i])
+#     # save before compress
+#     for i in range(1, len_beam_list):
+#         beam_list[i].compress()
+#         concat_beams.concat(beam_list[i])
 
-    cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.start - lbb) / stepsizes))
-    active_march = dr.full(mi.Bool, True, dr.width(concat_beams.start))
-    active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
-    outside = dr.full(mi.Bool, False, dr.width(concat_beams.start))
-    exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams.start))
-    dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams.start)) 
-    vid = dr.zeros(mi.UInt32, dr.width(concat_beams.start))
-    contribution = dr.zeros(FloatD, dr.width(concat_beams.start))
-    bounce_0 = concat_beams.bounceIdx == mi.UInt32(0)
-    bounce_1 = concat_beams.bounceIdx > mi.UInt32(0)
+#     cur_xyz_id = mi.Vector3i(dr.floor((concat_beams.start - lbb) / stepsizes))
+#     offset_in_sensor = mi.zeros(mi.Vector3f, dr.width(concat_beams.start))
+#     active_march = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+#     active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
+#     outside = dr.full(mi.Bool, False, dr.width(concat_beams.start))
+#     exit_step = dr.zeros(mi.Vector3i, dr.width(concat_beams.start))
+#     dist_in_voxel = dr.zeros(FloatD, dr.width(concat_beams.start)) 
+#     vid = dr.zeros(mi.UInt32, dr.width(concat_beams.start))
+#     contribution = dr.zeros(FloatD, dr.width(concat_beams.start))
+#     bounce_0 = concat_beams.bounceIdx == mi.UInt32(0)
+#     bounce_1 = concat_beams.bounceIdx > mi.UInt32(0)
     
-    if bounceid > -1:
-        active_bid = (concat_beams.bounceIdx == mi.UInt32(bounceid))
+#     rng_sensor = mi.PCG32(size=dr.width(concat_beams.start), initstate=1)
+
+#     if bounceid > -1:
+#         active_bid = (concat_beams.bounceIdx == mi.UInt32(bounceid))
         
-    it = mi.UInt32(0)
-    dr.make_opaque(it)
+#     it = mi.UInt32(0)
+#     dr.make_opaque(it)
     
-    while it < max_grid:
-        dr.make_opaque(cur_xyz_id)
-        vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
-        dist_in_voxel, exit_step = concat_beams.intersect3D(lb, rt)
-        valid_mask = (~outside) & concat_beams.active & active_march & active_bid
-        # dist_in_voxel = dr.select(dist_in_voxel < 0.0, 0.0, dist_in_voxel)
-        dist_detach = dr.detach(dist_in_voxel)
+#     while it < max_grid:
+#         sample1, sample2, sample3 = sample_float_32(rng_sensor), sample_float_32(rng_sensor), sample_float_32(rng_sensor)
+#         sensor_lbb = pos_of_sensor_lower(lbb, it, res, steps)
+#         offset_in_sensor.x = sample1 
+#         offset_in_sensor.y = sample2
+#         offset_in_sensor.z = sample3
+
+#         sensor_points = offset_in_sensor * step_size + sensor_lbb
+
+#         pos_on_beam = concat_beams.sample_point_on_beam(rng)
         
 
-        # correction
-        # this is working
-        # contribution_a = dist_in_voxel * concat_beams.color / voxel_volume
-
-        contribution_val = dist_in_voxel * concat_beams.color 
-        # contribution_val = dist_detach * concat_beams.color * concat_beams.constant
 
         
-        # contribution_val_gradient = dr.detach(dist_in_voxel) * concat_beams.color * concat_beams.constant
-        # dist_in_voxel * concat_beams.color  * concat_beams.constant - dr.detach(dist_in_voxel) * concat_beams.color  * concat_beams.constant + dr.detach(dist_in_voxel) * concat_beams.color
-        # dr.replace_grad(contribution_val, contribution_val_gradient)
-        contribution_a = contribution_val
-        # dr.detach(contribution_val) - dr.detach(contribution_val_gradient) + contribution_val_gradient
-        #  + (-dist_in_voxel + dist_detach) * dr.detach(concat_beams.color))
-        # (dist_in_voxel * concat_beams.constant) * dr.detach(concat_beams.color)  / voxel_volume +  dr.detach(dist_in_voxel * concat_beams.constant) * (concat_beams.color)  / voxel_volume
-        #  - dist_in_voxel + dist_detach
-
-
-        contribution_d = dist_detach * concat_beams.constant * concat_beams.color / voxel_volume
-        dr.scatter_add(voxels, contribution_a / voxel_volume, vid, valid_mask & bounce_1)
-        dr.scatter_add(voxels, contribution_d, vid, valid_mask & bounce_0)
-        cur_xyz_id, stop_march = net_voxel(cur_xyz_id, exit_step, resolution)
-        active_march = active_march & (~stop_march)
-        it += 1
-
-    # active_bid = dr.full(mi.Bool, True, dr.width(concat_beams.start))
-    # if bounceid > -1:
-    #     active_bid = (concat_beams.bounceIdx == bounceid)
-
-    #     #     cur_xyz_id = mi.Vector3i(dr.floor((beams.end - lbb) / stepsizes))
-    # valid_c_ray = (concat_beams.length != dr.inf) & concat_beams.active & concat_beams.collision
-            
-    # vid, lb, rt, outside = get_voxel_id(cur_xyz_id, lbb, stepsizes, resolution)
-
-    # contribution =  concat_beams.color * concat_beams.constant / voxel_volume / concat_beams.cross_section
-    # valid_c_mask = (~outside) & valid_c_ray & active_bid
-                
-    # dr.scatter_add(voxels, -contribution + dr.detach(contribution), vid, valid_c_mask)
+#         it += 1
     
-    return voxels
+#     return voxels
 
 
 def accumulate_photon_beams_faster(beam_list, resolution, boundingbox, bounceid=-1):

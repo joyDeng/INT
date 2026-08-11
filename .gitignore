@@ -2,9 +2,12 @@
 *.txt
 *.obj
 *.exr
+*.hdr
 Opt
 data
 *.mtl
 *.bat
 __pycache__
 *.png
+wandb
+webgl

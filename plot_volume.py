@@ -712,9 +712,82 @@ def plot_with_errors_multiple_energy(name, param):
     plt.savefig(f"{name}_gradient.png", bbox_inches="tight", dpi=200)
     plt.close(fig)
 
+def visualize_fig8(name):
+    mpl.rcParams.update({
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica", "Arial", "Liberation Sans"],
+        "font.size": 24,
+    })
+
+    # (prefix_label, file_id) for k=1..4
+    rows_config = [
+        ("bounce_0_", 11),
+        ("bounce_1_", 12),
+        ("bounce_1_", 13),
+        ("bounce_1_", 14),
+    ]
+    col_titles = ["Ref (fd)", "Collision", "Tracklength", "Volume flux"]
+
+    # Pre-load all data to compute shared flux color range
+    all_data = []
+    for prefix, file_id in rows_config:
+        vol_fd   = np.load(f"{file_id:02d}_two_sphere_collision_density_gradients_fd_numpy.npy")
+        vol_co   = np.load(f"{file_id:02d}_two_sphere_collision_density_gradients_co_numpy.npy")
+        vol_tr   = np.load(f"{file_id:02d}_two_sphere_collision_density_gradients_tr_numpy.npy")
+        vol_flux = np.load(f"{file_id:02d}_two_sphere_collision_density_avg_tr_numpy.npy")
+        z_index  = vol_fd.shape[0] // 2
+        all_data.append((vol_fd[z_index], vol_co[z_index], vol_tr[z_index], vol_flux[z_index]))
+
+    flux_max = max(d[3].max() for d in all_data)
+
+    fig, axes = plt.subplots(4, 4, figsize=(24, 24))
+
+    for row_idx, ((prefix, file_id), (slice_fd, slice_co, slice_tr, slice_flux)) in enumerate(
+        zip(rows_config, all_data)
+    ):
+        vb = max(abs(slice_fd.min()), abs(slice_fd.max()))
+
+        slices = [slice_fd, slice_co, slice_tr, slice_flux]
+        cmaps  = ["PuOr", "PuOr", "PuOr", "plasma"]
+        vmins  = [-vb, -vb, -vb, 0.0]
+        vmaxs  = [ vb,  vb,  vb, flux_max]
+
+        rmse_co = np.sqrt(np.mean(np.power(slice_co - slice_fd, 2.0)))
+        rmse_tr = np.sqrt(np.mean(np.power(slice_tr - slice_fd, 2.0)))
+        tr_ratio = rmse_tr / rmse_co if rmse_co > 0 else float("nan")
+
+        for col_idx, (sl, cm, vmin, vmax) in enumerate(zip(slices, cmaps, vmins, vmaxs)):
+            ax = axes[row_idx, col_idx]
+            im = ax.imshow(sl, cmap=cm, origin="lower", vmin=vmin, vmax=vmax)
+            ax.axis("off")
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+            if col_idx == 1:
+                ax.text(0.5, -0.04, f"RMSE: 1x", transform=ax.transAxes,
+                        ha="center", va="top", fontsize=20)
+            elif col_idx == 2:
+                ax.text(0.5, -0.04, f"RMSE: {tr_ratio:.2f}x", transform=ax.transAxes,
+                        ha="center", va="top", fontsize=20)
+
+        # row label to the left of the first column
+        axes[row_idx, 0].annotate(
+            f"k={row_idx + 1}",
+            xy=(0, 0.5), xycoords="axes fraction",
+            xytext=(-0.12, 0.5), textcoords="axes fraction",
+            ha="right", va="center", fontsize=22, rotation=90,
+        )
+
+    for col_idx, title in enumerate(col_titles):
+        axes[0, col_idx].set_title(title)
+
+    plt.tight_layout()
+    plt.savefig(f"{name}_fig8.png", dpi=150, bbox_inches="tight")
+
+
 if __name__ == "__main__":
     # visualize_two(6, "bounce_1_")
-    visualize_fig7(7, "bounce_0_")
+    # visualize_fig7(14, "bounce_1_")
+    visualize_fig8("bounce_comparison")
     # visualize_test()
     # debug_beam(2)
     # plot_with_errors_multiple_energy("torus_geo_multi_2", "offset")
