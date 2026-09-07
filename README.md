@@ -10,10 +10,6 @@ pip install mitsuba drjit numpy scipy matplotlib gpytoolbox
 
 OpenMC is only needed for the validation experiments and is easiest to run via Docker:
 
-```bash
-docker run --rm -it -v "${PWD}:/work" -w /work openmc/openmc:v0.13.2 python3 <script>.py
-```
-
 Before running anything, set the two paths in [constant.py](constant.py):
 
 - `DATA_DIR` — repo root (contains `scene/`, the `.obj` geometry used by the CSG scenes)
